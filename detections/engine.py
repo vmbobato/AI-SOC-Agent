@@ -1,5 +1,6 @@
 from typing import List, Dict, Any
 import pandas as pd
+import re
 
 def _to_df(events: List[Dict[str, Any]]) -> pd.DataFrame:
     df = pd.DataFrame(events)
@@ -87,16 +88,25 @@ def detect_bruteforce(df, window_minutes, brute_force_threshold):
     df = df.copy()
     df["win"] = _window_key(df["ts"], window_minutes)
 
-    login_paths = [
-        "/login",
-        "/wp-login.php",
-        "/admin",
-        "/api/auth",
-        "/signin",
-    ]
+    login_exact = {
+    "/login",
+    "/login/",
+    "/signin",
+    "/signin/",
+    "/wp-login.php",
+    "/api/login",
+    "/api/auth/login",
+}
 
-    mask = df["path"].str.contains("|".join(login_paths), na=False)
+    # brute force should usually be POSTs to login endpoints
+    mask = (
+        df["method"].astype(str).eq("POST")
+        & df["path"].astype(str).isin(login_exact)
+    )
     login_df = df[mask]
+    
+    if login_df.empty:
+        return []
 
     rows = []
     grp = login_df.groupby(["client_ip", "win"])
@@ -105,7 +115,7 @@ def detect_bruteforce(df, window_minutes, brute_force_threshold):
         attempts = len(g)
 
         if attempts >= brute_force_threshold:
-            fail_ratio = ((g["status"] == 401) | (g["status"] == 403)).mean()
+            fail_ratio = g["status"].isin([400, 401, 403, 429]).mean()
 
             rows.append({
                 "incident_type": "Brute Force Attempt",
@@ -162,6 +172,176 @@ def detect_dos_bursts(df, window_minutes, dos_rpm_threshold):
 
     return rows
 
+def detect_sensitive_file_probes(df, window_minutes, min_hits=5):
+    """
+    Detects probing for sensitive files / known exploit targets.
+    This is NOT generic scanning; it's specifically 'high-risk target probing'.
+    """
+    df = df.copy()
+    df["win"] = _window_key(df["ts"], window_minutes)
+
+    # Keep this list simple + explainable; you can expand later.
+    # Using "contains" on these substrings is intentional.
+    indicators = [
+        "/.env",
+        "/.git/config",
+        "/phpinfo",
+        "xampp/phpinfo",
+        "/vendor/phpunit",
+        "eval-stdin.php",
+        "/wp-config.php",
+        "/adminer",
+        "/composer.json",
+        "/config.yaml",
+        "/id_rsa",
+        "/.ssh",
+        "/.aws/credentials",
+        "/.npmrc",
+        "/.docker",
+    ]
+
+    path_series = df["path"].astype(str)
+    pattern = "|".join(re.escape(x) for x in indicators)
+    mask = path_series.str.contains(pattern, na=False, regex=True)
+    sdf = df[mask]
+    if sdf.empty:
+        return []
+
+    rows = []
+    grp = sdf.groupby(["client_ip", "win"])
+
+    for (ip, win), g in grp:
+        hits = len(g)
+        if hits < min_hits:
+            continue
+
+        # evidence
+        top_paths = g["path"].value_counts().head(15).to_dict()
+        status_counts = g["status"].value_counts().to_dict()
+
+        # confidence: if they hit many distinct sensitive targets, it's very strong
+        distinct_targets = g["path"].nunique()
+        confidence = 0.8
+        if distinct_targets >= 10:
+            confidence = 0.95
+        elif distinct_targets >= 5:
+            confidence = 0.9
+        confidence = round(confidence, 2)
+
+        rows.append({
+            "incident_type": "Sensitive File / Exploit Probe",
+            "timestamp_start": win.isoformat(),
+            "timestamp_end": (win + pd.Timedelta(minutes=window_minutes)).isoformat(),
+            "source_ips": [ip],
+            "evidence": {
+                "hits": hits,
+                "distinct_targets": int(distinct_targets),
+                "top_paths": top_paths,
+                "status_counts": status_counts,
+                "top_user_agents": g["user_agent"].value_counts().head(5).to_dict() if "user_agent" in g else {},
+            },
+            "severity": "High",
+            "confidence": confidence,
+            "recommended_actions": [
+                "Block IP immediately (this is high-risk probing).",
+                "Enable/verify WAF managed rules and rate limiting.",
+                "Search server/app for exposure of targeted files (.env, .git, phpinfo, phpunit).",
+                "Confirm no suspicious 200/302 responses on sensitive targets; investigate if present.",
+            ],
+        })
+
+    return rows
+
+def merge_cases(cases, gap_minutes=0):
+    """
+    Merge adjacent cases with the same incident_type and same single source IP.
+    gap_minutes=0 means windows must touch exactly.
+    gap_minutes=1 allows a small gap between windows.
+    """
+    if not cases:
+        return []
+
+    # Sort by type, ip, time
+    def key(c):
+        ip = (c.get("source_ips") or [""])[0]
+        return (c.get("incident_type", ""), ip, c.get("timestamp_start", ""))
+
+    cases = sorted(cases, key=key)
+
+    merged = []
+    for c in cases:
+        ip_list = c.get("source_ips") or []
+        ip = ip_list[0] if ip_list else None
+
+        if not merged:
+            merged.append(c)
+            continue
+
+        last = merged[-1]
+        last_ip_list = last.get("source_ips") or []
+        last_ip = last_ip_list[0] if last_ip_list else None
+
+        same_type = c.get("incident_type") == last.get("incident_type")
+        same_ip = ip is not None and ip == last_ip
+
+        if not (same_type and same_ip):
+            merged.append(c)
+            continue
+
+        # Parse timestamps
+        start = pd.to_datetime(c["timestamp_start"], utc=True)
+        end = pd.to_datetime(c["timestamp_end"], utc=True)
+        last_start = pd.to_datetime(last["timestamp_start"], utc=True)
+        last_end = pd.to_datetime(last["timestamp_end"], utc=True)
+
+        # If this window starts within allowed gap after last window, merge
+        allowed_gap = pd.Timedelta(minutes=gap_minutes)
+
+        if start <= last_end + allowed_gap:
+            # Extend the time window
+            last["timestamp_end"] = max(last_end, end).isoformat()
+
+            # Merge evidence safely (keep things explainable)
+            ev_last = last.get("evidence") or {}
+            ev_new = c.get("evidence") or {}
+
+            # Sum some numeric evidence keys if present
+            for k in ["requests", "login_attempts", "hits"]:
+                if k in ev_last and k in ev_new and isinstance(ev_last[k], (int, float)) and isinstance(ev_new[k], (int, float)):
+                    ev_last[k] = ev_last[k] + ev_new[k]
+                    
+            # Max (peak) metrics for scan windows
+            for k in ["unique_paths_window", "unique_ratio_window", "404_ratio_window", "distinct_targets"]:
+                if k in ev_last and k in ev_new and isinstance(ev_last[k], (int, float)) and isinstance(ev_new[k], (int, float)):
+                    ev_last[k] = max(ev_last[k], ev_new[k])
+
+            # Merge top_paths dicts if present (sum counts)
+            if isinstance(ev_last.get("top_paths"), dict) and isinstance(ev_new.get("top_paths"), dict):
+                combined = dict(ev_last["top_paths"])
+                for p, cnt in ev_new["top_paths"].items():
+                    combined[p] = combined.get(p, 0) + cnt
+                # keep top 15
+                ev_last["top_paths"] = dict(sorted(combined.items(), key=lambda x: x[1], reverse=True)[:15])
+
+            # Merge status_counts dicts
+            if isinstance(ev_last.get("status_counts"), dict) and isinstance(ev_new.get("status_counts"), dict):
+                combined = dict(ev_last["status_counts"])
+                for s, cnt in ev_new["status_counts"].items():
+                    combined[int(s)] = combined.get(int(s), 0) + cnt
+                ev_last["status_counts"] = dict(sorted(combined.items(), key=lambda x: x[0]))
+
+            last["evidence"] = ev_last
+
+            # Confidence/severity: keep the max (more conservative)
+            if "confidence" in c and c["confidence"] is not None:
+                last["confidence"] = max(last.get("confidence") or 0, c["confidence"])
+            if (last.get("severity") == "Medium" and c.get("severity") == "High") or (last.get("severity") == "Low" and c.get("severity") in ["Medium", "High"]):
+                last["severity"] = c.get("severity")
+
+        else:
+            merged.append(c)
+
+    return merged
 
 def run_detections(
     events,
@@ -176,28 +356,11 @@ def run_detections(
         return []
 
     cases = []
-    cases.extend(
-        detect_web_scans(
-            df,
-            window_minutes,
-            scan_unique_paths_threshold,
-            scan_404_ratio_threshold
-        )
-    )
-    cases.extend(
-        detect_bruteforce(
-            df,
-            window_minutes,
-            brute_force_threshold
-        )
-    )
-    cases.extend(
-        detect_dos_bursts(
-            df,
-            window_minutes,
-            dos_rpm_threshold
-        )
-    )
-
+    cases.extend(detect_web_scans(df, window_minutes, scan_unique_paths_threshold, scan_404_ratio_threshold))
+    cases.extend(detect_sensitive_file_probes(df, window_minutes, min_hits=5))
+    cases.extend(detect_bruteforce(df, window_minutes, brute_force_threshold))
+    cases.extend(detect_dos_bursts(df, window_minutes, dos_rpm_threshold))
+    
+    cases = merge_cases(cases, gap_minutes=0)
     cases.sort(key=lambda c: c.get("timestamp_start", ""))
     return cases
