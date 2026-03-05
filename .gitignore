@@ -1,2 +1,6 @@
-__pycaches__
-.soc_agent
+data/raw/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
