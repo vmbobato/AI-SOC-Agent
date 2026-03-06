@@ -1,4 +1,4 @@
-import hashlib, json
+import hashlib, json, time
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
@@ -96,9 +96,12 @@ def run(filepath):
         print(f"  Evidence keys: {list((c.get('evidence') or {}).keys())}")
     if cases:
         try:
-            llm_summary = analyze_cases_with_ollama(cases, model="llama3", timeout=120)
+            start = time.time()
+            llm_summary = analyze_cases_with_ollama(cases, model="llama3", timeout=1000)
             llm_summary_path = write_llm_summary(llm_summary, out_dir="reports")
             print(f"\nLLM summary saved to: {llm_summary_path}")
+            end = time.time()
+            print(f"\nLLM took {end - start:.2f} seconds to give an asnwer. ")
         except Exception as e:
             print(f"\nLLM analysis failed: {e}")
 
