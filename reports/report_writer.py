@@ -5,7 +5,7 @@ import json
 def _now_tag() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_utc")
 
-def write_markdown_report(cases, llm_output, out_dir="reports") -> Path:
+def write_markdown_report(cases, out_dir="reports") -> Path:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
