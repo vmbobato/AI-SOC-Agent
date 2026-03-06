@@ -8,8 +8,8 @@ from parsers.nginx_parser import parse_nginx_access_line, parse_nginx_error_line
 from parsers.eb_log_parser import parse_eb_engine_line, parse_eb_hooks_line
 from parsers.web_stdout_parser import parse_web_stdout_line
 from detections.engine import run_detections
-
-import pandas as pd
+from llm.incident_analyzer import analyze_cases_with_ollama
+from reports.llm_report_writer import write_llm_summary
 
 
 PARSERS = {
@@ -94,7 +94,13 @@ def run(filepath):
         print(f"  Window: {c['timestamp_start']} -> {c['timestamp_end']}")
         print(f"  Severity: {c.get('severity')}  Confidence: {c.get('confidence')}")
         print(f"  Evidence keys: {list((c.get('evidence') or {}).keys())}")
-
+    if cases:
+        try:
+            llm_summary = analyze_cases_with_ollama(cases, model="llama3", timeout=120)
+            llm_summary_path = write_llm_summary(llm_summary, out_dir="reports")
+            print(f"\nLLM summary saved to: {llm_summary_path}")
+        except Exception as e:
+            print(f"\nLLM analysis failed: {e}")
 
 if __name__ == "__main__":
     running = True
@@ -112,9 +118,6 @@ if __name__ == "__main__":
             if cmd == "exit":
                 running = False
         except KeyboardInterrupt as e:
-            with open(f"saved_states/{datetime.now().strftime("%Y-%m-%d_%H-%M_Saved_State")}.json", "w") as f:
-                json.dump(CURRENT_STATE, f, indent=4)
-            print("\nClosing Agent...\nBye!\n")
             running = False
             
     with open(f"saved_states/{datetime.now().strftime("%Y-%m-%d_%H-%M_Saved-State")}.json", "w") as f:

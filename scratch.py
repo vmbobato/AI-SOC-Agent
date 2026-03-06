@@ -1,4 +1,12 @@
-import datetime
+import requests
 
-x = datetime.datetime.now().strftime("%Y-%m-%d_%H_%M_Saved-State")
-print(x) 
+resp = requests.post(
+    "http://localhost:11434/api/generate",
+    json={
+        "model": "llama3",
+        "prompt": "Explain what a web enumeration scan is in cybersecurity.",
+        "stream": False
+    }
+)
+
+print(resp.json()["response"])
