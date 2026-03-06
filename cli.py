@@ -3,17 +3,19 @@ from pathlib import Path
 from datetime import datetime
 from reports.report_writer import write_markdown_report, write_json_cases
 from ingest.log_reader import iter_log_lines
-from parsers.nginx_parser import parse_nginx_access_line
+from parsers.nginx_parser import parse_nginx_access_line, parse_nginx_error_line
+from parsers.eb_log_parser import parse_eb_engine_line, parse_eb_hooks_line
+from parsers.web_stdout_parser import parse_web_stdout_line
 from detections.engine import run_detections
 
 
-LOG_PATHS = [
-    "/var/log/nginx/access.log",
-    "/var/log/nginx/error.log",
-    "/var/log/web.stdout.log",
-    "/var/log/eb-engine.log",
-    "/var/log/eb-hooks.log",
-]
+PARSERS = {
+    "/var/log/nginx/access.log": parse_nginx_access_line,
+    "/var/log/nginx/error.log": parse_nginx_error_line,
+    "/var/log/web.stdout.log": parse_web_stdout_line,
+    "/var/log/eb-engine.log": parse_eb_engine_line,
+    "/var/log/eb-hooks.log": parse_eb_hooks_line,
+}
 
 CURRENT_STATE = {
     "last_file_read_path" : None,
@@ -35,14 +37,15 @@ def run(filepath):
     events = []
     for line in iter_log_lines(log_path):
         evt = None
+        line = line.rstrip("\n")
         if not line or line.startswith("----"):
             continue
-        if line in LOG_PATHS:
+        if line in PARSERS:
             CURRENT_STATE["next_parser"] = line
             continue
-        if CURRENT_STATE["next_parser"] == "/var/log/nginx/access.log":
-            evt = parse_nginx_access_line(line)
-            print(line)
+        parser = PARSERS.get(CURRENT_STATE["next_parser"])
+        if parser:
+            evt = parser(line)
         if evt:
             events.append(evt)
 
@@ -68,6 +71,7 @@ def run(filepath):
         print(f"  Window: {c['timestamp_start']} -> {c['timestamp_end']}")
         print(f"  Severity: {c.get('severity')}  Confidence: {c.get('confidence')}")
         print(f"  Evidence keys: {list((c.get('evidence') or {}).keys())}")
+
 
 if __name__ == "__main__":
     running = True
