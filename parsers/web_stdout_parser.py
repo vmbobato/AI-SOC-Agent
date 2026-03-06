@@ -2,50 +2,67 @@ import re
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 
-WEB_STDOUT_PATTERNS = [
-    re.compile(
-        r'^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+'
-        r'(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+'
-        r'(?P<message>.*)$'
-    ),
-    re.compile(
-        r'^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+\-]\d{4})\]\s+'
-        r'\[(?P<pid>\d+)\]\s+'
-        r'\[(?P<level>[A-Z]+)\]\s+'
-        r'(?P<message>.*)$'
-    ),
-]
+SYSLOG_APP_PATTERN = re.compile(
+    r'^(?P<syslog_ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+'
+    r'(?P<host>\S+)\s+'
+    r'(?P<service>[a-zA-Z0-9_.-]+)\[(?P<pid>\d+)\]:\s+'
+    r'\[(?P<app_ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\]\s+'
+    r'(?P<level>[A-Z]+)\s+in\s+(?P<module>[a-zA-Z0-9_.-]+):\s+'
+    r'(?P<message>.*)$'
+)
+
+KV_TAIL_PATTERN = re.compile(
+    r'^(?P<summary>.*?)'
+    r'(?:\s+method=(?P<method>[A-Z]+))?'
+    r'(?:\s+path=(?P<path>\S+))?'
+    r'(?:\s+ip=(?P<client_ip>\S+))?'
+    r'(?:\s+ua=(?P<user_agent>.*?))?'
+    r'(?:\s+reason=(?P<reason>\S+))?'
+    r'(?:\s+sample=(?P<sample>\S+))?$'
+)
 
 def parse_web_stdout_line(line: str) -> Optional[Dict[str, Any]]:
-    for pattern in WEB_STDOUT_PATTERNS:
-        m = pattern.match(line)
-        if not m:
-            continue
+    m = SYSLOG_APP_PATTERN.match(line)
+    if not m:
+        return None
 
-        g = m.groupdict()
+    g = m.groupdict()
 
-        dt = None
-        if "," in g["ts"]:
-            dt = datetime.strptime(g["ts"], "%Y-%m-%d %H:%M:%S,%f").replace(tzinfo=timezone.utc)
-        else:
-            dt = datetime.strptime(g["ts"], "%Y-%m-%d %H:%M:%S %z").astimezone(timezone.utc)
+    dt = datetime.strptime(g["app_ts"], "%Y-%m-%d %H:%M:%S,%f").replace(tzinfo=timezone.utc)
 
-        return {
-            "timestamp": dt.isoformat(),
-            "source": "web_stdout",
-            "severity": g["level"].lower(),
-            "pid": int(g["pid"]) if g.get("pid") else None,
-            "message": g["message"],
-            "raw_line": line,
-        }
+    msg = g["message"].strip()
+    km = KV_TAIL_PATTERN.match(msg)
 
-    return None
+    summary = msg
+    method = path = client_ip = user_agent = reason = sample = None
 
-def parse_web_stdout_line_fallback(line: str) -> Dict[str, Any]:
+    if km:
+        kd = km.groupdict()
+        summary = (kd.get("summary") or "").strip()
+        method = kd.get("method")
+        path = kd.get("path")
+        client_ip = kd.get("client_ip")
+        user_agent = kd.get("user_agent")
+        reason = kd.get("reason")
+        sample = kd.get("sample")
+
+        if user_agent:
+            user_agent = user_agent.strip()
+
     return {
-        "timestamp": None,
+        "timestamp": dt.isoformat(),
         "source": "web_stdout",
-        "severity": "info",
-        "message": line.strip(),
+        "severity": g["level"].lower(),
+        "host": g["host"],
+        "service": g["service"],
+        "pid": int(g["pid"]),
+        "module": g["module"],
+        "message": summary,
+        "client_ip": client_ip,
+        "method": method,
+        "path": path,
+        "user_agent": user_agent,
+        "reason": reason,
+        "sample": sample,
         "raw_line": line,
     }

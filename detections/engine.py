@@ -2,9 +2,10 @@ from typing import List, Dict, Any
 import pandas as pd
 import re
 
-def _to_df(events: List[Dict[str, Any]]) -> pd.DataFrame:
+def _to_df(events):
     df = pd.DataFrame(events)
-    df["ts"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+    df["timestamp"] = df["timestamp"].astype(str).str.strip()
+    df["ts"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce", format="mixed")
     df = df.dropna(subset=["ts"])
     return df
 
@@ -246,6 +247,40 @@ def detect_sensitive_file_probes(df, window_minutes, min_hits=5):
         })
     return rows
 
+def detect_app_blocked_probes(app_df, window_minutes=2, min_hits=5):
+    if app_df.empty:
+        return []
+
+    app_df["win"] = _window_key(app_df["ts"], window_minutes)
+    mask = app_df["reason"].astype(str).isin(["secret_path", "bogus_stack_probe"])
+    app_df = app_df[mask]
+
+    rows = []
+    for (ip, win), g in app_df.groupby(["client_ip", "win"]):
+        hits = len(g)
+        if hits < min_hits:
+            continue
+        rows.append({
+            "incident_type": "Blocked App-Layer Probe",
+            "timestamp_start": win.isoformat(),
+            "timestamp_end": (win + pd.Timedelta(minutes=window_minutes)).isoformat(),
+            "source_ips": [ip],
+            "evidence": {
+                "hits": hits,
+                "reasons": g["reason"].value_counts().to_dict(),
+                "top_paths": g["path"].value_counts().head(10).to_dict(),
+                "top_user_agents": g["user_agent"].value_counts().head(5).to_dict(),
+            },
+            "severity": "High",
+            "confidence": 0.95,
+            "recommended_actions": [
+                "Block the source IP if repeated.",
+                "Review WAF and app-layer blocking coverage.",
+                "Verify no targeted endpoint returned success elsewhere.",
+            ],
+        })
+    return rows
+
 
 def merge_cases(cases, gap_minutes=0):
     """
@@ -331,11 +366,14 @@ def run_detections(
         return []
 
     cases = []
-    cases.extend(detect_web_scans(df, window_minutes, scan_unique_paths_threshold, scan_404_ratio_threshold))
-    cases.extend(detect_sensitive_file_probes(df, window_minutes, min_hits=5))
-    cases.extend(detect_bruteforce(df, window_minutes, brute_force_threshold))
-    cases.extend(detect_dos_bursts(df, window_minutes, dos_rpm_threshold))
     
-    cases = merge_cases(cases, gap_minutes=0)
+    access_df = df[df["source"] == "nginx_access"].copy()
+    app_df = df[df["source"] == "web_stdout"].copy()
+    cases.extend(detect_web_scans(access_df, window_minutes, scan_unique_paths_threshold, scan_404_ratio_threshold))
+    cases.extend(detect_sensitive_file_probes(access_df, window_minutes, min_hits=5))
+    cases.extend(detect_bruteforce(access_df, window_minutes, brute_force_threshold))
+    cases.extend(detect_dos_bursts(access_df, window_minutes, dos_rpm_threshold))
+    cases.extend(detect_app_blocked_probes(app_df, window_minutes=window_minutes, min_hits=5))
+    cases = merge_cases(cases, gap_minutes=2)
     cases.sort(key=lambda c: c.get("timestamp_start", ""))
     return cases

@@ -1,0 +1,6 @@
+{
+    "last_file_read_path": "data/last_100_log_3-5-2026/example_2.log",
+    "last_file_read_hash": "8f25cbad8462a1d56bcc92ea6029d94baf9bf1878acfcbfee790cf56bf5f586f",
+    "last_file_read_time": "2026/03/06 -- 14:06:05",
+    "next_parser": "/var/log/nginx/error.log"
+}
