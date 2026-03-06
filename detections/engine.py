@@ -353,6 +353,59 @@ def merge_cases(cases, gap_minutes=0):
             merged.append(c)
     return merged
 
+import pandas as pd
+
+def suppress_redundant_dos_cases(cases):
+    """
+    Remove DoS cases that are likely just high-volume web scans.
+
+    Rule:
+    - if a 'Traffic Burst / Possible DoS' case overlaps in time with a
+      'Web Enumeration Scan' for the same IP, suppress the DoS case.
+    """
+    if not cases:
+        return []
+
+    scan_cases = []
+    dos_cases = []
+    other_cases = []
+
+    for c in cases:
+        incident_type = c.get("incident_type")
+        if incident_type == "Web Enumeration Scan":
+            scan_cases.append(c)
+        elif incident_type == "Traffic Burst / Possible DoS":
+            dos_cases.append(c)
+        else:
+            other_cases.append(c)
+
+    kept_dos = []
+
+    for dos in dos_cases:
+        dos_ip = (dos.get("source_ips") or [None])[0]
+        dos_start = pd.to_datetime(dos["timestamp_start"], utc=True)
+        dos_end = pd.to_datetime(dos["timestamp_end"], utc=True)
+
+        suppress = False
+
+        for scan in scan_cases:
+            scan_ip = (scan.get("source_ips") or [None])[0]
+            scan_start = pd.to_datetime(scan["timestamp_start"], utc=True)
+            scan_end = pd.to_datetime(scan["timestamp_end"], utc=True)
+
+            same_ip = dos_ip == scan_ip
+            overlaps = dos_start < scan_end and dos_end > scan_start
+
+            if same_ip and overlaps:
+                suppress = True
+                break
+
+        if not suppress:
+            kept_dos.append(dos)
+
+    final_cases = other_cases + scan_cases + kept_dos
+    return final_cases
+
 def run_detections(
     events,
     scan_unique_paths_threshold=40,
@@ -375,5 +428,6 @@ def run_detections(
     cases.extend(detect_dos_bursts(access_df, window_minutes, dos_rpm_threshold))
     cases.extend(detect_app_blocked_probes(app_df, window_minutes=window_minutes, min_hits=5))
     cases = merge_cases(cases, gap_minutes=2)
+    cases = suppress_redundant_dos_cases(cases)
     cases.sort(key=lambda c: c.get("timestamp_start", ""))
     return cases
