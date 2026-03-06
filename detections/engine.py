@@ -206,19 +206,15 @@ def detect_sensitive_file_probes(df, window_minutes, min_hits=5):
     sdf = df[mask]
     if sdf.empty:
         return []
-
     rows = []
     grp = sdf.groupby(["client_ip", "win"])
-
     for (ip, win), g in grp:
         hits = len(g)
         if hits < min_hits:
             continue
-
         # evidence
         top_paths = g["path"].value_counts().head(15).to_dict()
         status_counts = g["status"].value_counts().to_dict()
-
         # confidence: if they hit many distinct sensitive targets, it's very strong
         distinct_targets = g["path"].nunique()
         confidence = 0.8
@@ -227,7 +223,6 @@ def detect_sensitive_file_probes(df, window_minutes, min_hits=5):
         elif distinct_targets >= 5:
             confidence = 0.9
         confidence = round(confidence, 2)
-
         rows.append({
             "incident_type": "Sensitive File / Exploit Probe",
             "timestamp_start": win.isoformat(),
@@ -249,8 +244,8 @@ def detect_sensitive_file_probes(df, window_minutes, min_hits=5):
                 "Confirm no suspicious 200/302 responses on sensitive targets; investigate if present.",
             ],
         })
-
     return rows
+
 
 def merge_cases(cases, gap_minutes=0):
     """
@@ -260,61 +255,46 @@ def merge_cases(cases, gap_minutes=0):
     """
     if not cases:
         return []
-
     # Sort by type, ip, time
     def key(c):
         ip = (c.get("source_ips") or [""])[0]
         return (c.get("incident_type", ""), ip, c.get("timestamp_start", ""))
-
     cases = sorted(cases, key=key)
-
     merged = []
     for c in cases:
         ip_list = c.get("source_ips") or []
         ip = ip_list[0] if ip_list else None
-
         if not merged:
             merged.append(c)
             continue
-
         last = merged[-1]
         last_ip_list = last.get("source_ips") or []
         last_ip = last_ip_list[0] if last_ip_list else None
-
         same_type = c.get("incident_type") == last.get("incident_type")
         same_ip = ip is not None and ip == last_ip
-
         if not (same_type and same_ip):
             merged.append(c)
             continue
-
-        # Parse timestamps
         start = pd.to_datetime(c["timestamp_start"], utc=True)
         end = pd.to_datetime(c["timestamp_end"], utc=True)
         last_start = pd.to_datetime(last["timestamp_start"], utc=True)
         last_end = pd.to_datetime(last["timestamp_end"], utc=True)
-
         # If this window starts within allowed gap after last window, merge
         allowed_gap = pd.Timedelta(minutes=gap_minutes)
-
         if start <= last_end + allowed_gap:
             # Extend the time window
             last["timestamp_end"] = max(last_end, end).isoformat()
-
             # Merge evidence safely (keep things explainable)
             ev_last = last.get("evidence") or {}
             ev_new = c.get("evidence") or {}
-
             # Sum some numeric evidence keys if present
             for k in ["requests", "login_attempts", "hits"]:
                 if k in ev_last and k in ev_new and isinstance(ev_last[k], (int, float)) and isinstance(ev_new[k], (int, float)):
                     ev_last[k] = ev_last[k] + ev_new[k]
-                    
             # Max (peak) metrics for scan windows
             for k in ["unique_paths_window", "unique_ratio_window", "404_ratio_window", "distinct_targets"]:
                 if k in ev_last and k in ev_new and isinstance(ev_last[k], (int, float)) and isinstance(ev_new[k], (int, float)):
                     ev_last[k] = max(ev_last[k], ev_new[k])
-
             # Merge top_paths dicts if present (sum counts)
             if isinstance(ev_last.get("top_paths"), dict) and isinstance(ev_new.get("top_paths"), dict):
                 combined = dict(ev_last["top_paths"])
@@ -322,25 +302,20 @@ def merge_cases(cases, gap_minutes=0):
                     combined[p] = combined.get(p, 0) + cnt
                 # keep top 15
                 ev_last["top_paths"] = dict(sorted(combined.items(), key=lambda x: x[1], reverse=True)[:15])
-
             # Merge status_counts dicts
             if isinstance(ev_last.get("status_counts"), dict) and isinstance(ev_new.get("status_counts"), dict):
                 combined = dict(ev_last["status_counts"])
                 for s, cnt in ev_new["status_counts"].items():
                     combined[int(s)] = combined.get(int(s), 0) + cnt
                 ev_last["status_counts"] = dict(sorted(combined.items(), key=lambda x: x[0]))
-
             last["evidence"] = ev_last
-
             # Confidence/severity: keep the max (more conservative)
             if "confidence" in c and c["confidence"] is not None:
                 last["confidence"] = max(last.get("confidence") or 0, c["confidence"])
             if (last.get("severity") == "Medium" and c.get("severity") == "High") or (last.get("severity") == "Low" and c.get("severity") in ["Medium", "High"]):
                 last["severity"] = c.get("severity")
-
         else:
             merged.append(c)
-
     return merged
 
 def run_detections(
