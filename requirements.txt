@@ -1,2 +1,4 @@
-pandas
-numpy
+pandas==3.0.1
+numpy==2.4.2
+requests==2.32.5
+python-dotenv==1.0.1
