@@ -1,12 +1,90 @@
 from pathlib import Path
 from datetime import datetime, timezone
 import json
-from typing import Any
-
+from typing import Any, Dict, List
+	
 def _now_tag() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_utc")
 
-def write_markdown_report(cases, out_dir="reports") -> Path:
+
+def _render_mapping(lines: List[str], mapping: Dict[str, Any], prefix: str = "- ") -> None:
+    if not mapping:
+        lines.append(f"{prefix}(none)")
+        return
+    for key, value in mapping.items():
+        lines.append(f"{prefix}**{key}**: {value}")
+	
+def _append_campaign_section(lines: List[str], campaigns: List[Dict[str, Any]]) -> None:
+    lines.append("# Attack Campaigns")
+    lines.append("")
+    if not campaigns:
+        lines.append("No correlated campaigns identified.")
+        lines.append("")
+        return
+
+    for idx, campaign in enumerate(campaigns, 1):
+        lines.append(f"## Campaign {idx}: {campaign.get('campaign_id', 'unknown')}")
+        lines.append(f"- Source IP: {campaign.get('source_ip', 'N/A')}")
+        lines.append(f"- First seen: {campaign.get('first_seen', 'N/A')}")
+        lines.append(f"- Last seen: {campaign.get('last_seen', 'N/A')}")
+        lines.append(f"- Duration (minutes): {campaign.get('duration_minutes', 'N/A')}")
+        lines.append(f"- Incident count: {campaign.get('incident_count', 0)}")
+        incident_types = campaign.get("incident_types") or []
+        lines.append(f"- Incident types: {', '.join(incident_types) if incident_types else 'N/A'}")
+        lines.append(f"- Risk score: {campaign.get('risk_score', 'N/A')}")
+        lines.append(f"- Risk level: {campaign.get('risk_level', 'N/A')}")
+        lines.append("")
+
+        lines.append("### Analysis Context")
+        _render_mapping(lines, campaign.get("analysis_context") or {})
+        lines.append("")
+
+        lines.append("### Exposure Analysis")
+        _render_mapping(lines, campaign.get("exposure_analysis") or {})
+        lines.append("")
+
+        lines.append("### IOC Extraction")
+        _render_mapping(lines, campaign.get("ioc_summary") or {})
+        lines.append("")
+
+        lines.append("### Infrastructure Analysis")
+        _render_mapping(lines, campaign.get("shared_infrastructure_context") or {})
+        lines.append("")
+
+        lines.append("### Defensive Control Effectiveness")
+        _render_mapping(lines, campaign.get("control_effectiveness") or {})
+        lines.append("")
+
+        lines.append("### Campaign Severity Explanation")
+        _render_mapping(lines, campaign.get("severity_explanation") or {})
+        lines.append("")
+
+        lines.append("### Analyst Playbook")
+        playbook = campaign.get("analyst_playbook") or []
+        if not playbook:
+            lines.append("- (none)")
+        else:
+            for action in playbook:
+                lines.append(f"- {action}")
+        lines.append("")
+
+        lines.append("### Timeline")
+        timeline = campaign.get("timeline") or []
+        if not timeline:
+            lines.append("- (none)")
+        else:
+            for item in timeline:
+                lines.append(
+                    f"- {item.get('timestamp_start', 'N/A')} → {item.get('timestamp_end', 'N/A')} | "
+                    f"{item.get('incident_type', 'Unknown')} | {item.get('summary', '')}"
+                )
+        lines.append("")
+        lines.append("### Analyst Note")
+        lines.append(campaign.get("analyst_note", "No analyst note."))
+        lines.append("")
+
+
+def write_markdown_report(cases, campaigns=None, out_dir="reports") -> Path:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -18,7 +96,11 @@ def write_markdown_report(cases, out_dir="reports") -> Path:
     lines.append("")
     lines.append(f"- Generated (UTC): {datetime.now(timezone.utc).isoformat()}")
     lines.append(f"- Cases detected: {len(cases)}")
+    campaign_count = len(campaigns or [])
+    lines.append(f"- Campaigns correlated: {campaign_count}")
     lines.append("")
+
+    _append_campaign_section(lines, campaigns or [])
 
     if not cases:
         lines.append("No incidents detected with current thresholds.")
@@ -75,6 +157,22 @@ def write_markdown_report(cases, out_dir="reports") -> Path:
                 lines.append(f"  - Intel Sources: {source_str or 'N/A'}")
         lines.append("")
 
+        lines.append("### Analysis Context")
+        _render_mapping(lines, c.get("analysis_context") or {})
+        lines.append("")
+
+        lines.append("### Exposure Analysis")
+        _render_mapping(lines, c.get("exposure_analysis") or {})
+        lines.append("")
+
+        lines.append("### IOC Extraction")
+        _render_mapping(lines, c.get("ioc_summary") or {})
+        lines.append("")
+
+        lines.append("### Defensive Control Effectiveness")
+        _render_mapping(lines, c.get("control_effectiveness") or {})
+        lines.append("")
+
         lines.append("### Recommended Actions")
         actions = c.get("recommended_actions") or []
         if not actions:
@@ -94,4 +192,14 @@ def write_json_cases(cases, out_dir="reports") -> Path:
     tag = _now_tag()
     out_path = out_dir / f"cases_{tag}.json"
     out_path.write_text(json.dumps(cases, indent=2), encoding="utf-8")
+    return out_path
+
+
+def write_json_campaigns(campaigns, out_dir="reports") -> Path:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    tag = _now_tag()
+    out_path = out_dir / f"campaigns_{tag}.json"
+    out_path.write_text(json.dumps(campaigns, indent=2), encoding="utf-8")
     return out_path

@@ -22,6 +22,53 @@ def _parse_asn_and_org(org_value: Optional[str]) -> tuple[Optional[str], Optiona
     return None, org_value
 
 
+def _extract_ipinfo_asn_and_org(payload: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    """
+    Normalize ASN/org across IPinfo response variants.
+
+    Common variants:
+    - {"org": "AS15169 Google LLC"}
+    - {"asn": "AS15169", "org": "Google LLC"}
+    - {"asn": {"asn": "AS15169", "name": "Google LLC"}}
+    """
+    asn_value: Optional[str] = None
+    org_value: Optional[str] = None
+
+    asn_field = payload.get("asn")
+    if isinstance(asn_field, str) and asn_field.strip():
+        asn_value = asn_field.strip().upper()
+    elif isinstance(asn_field, dict):
+        nested_asn = asn_field.get("asn") or asn_field.get("id")
+        if isinstance(nested_asn, str) and nested_asn.strip():
+            asn_value = nested_asn.strip().upper()
+        nested_org = asn_field.get("name") or asn_field.get("org")
+        if isinstance(nested_org, str) and nested_org.strip():
+            org_value = nested_org.strip()
+
+    org_field = payload.get("org")
+    parsed_asn, parsed_org = _parse_asn_and_org(org_field if isinstance(org_field, str) else None)
+    if not asn_value:
+        asn_value = parsed_asn
+    if not org_value:
+        if isinstance(org_field, str) and org_field.strip():
+            org_value = parsed_org or org_field.strip()
+
+    return asn_value, org_value
+
+
+def _extract_ipinfo_country(payload: Dict[str, Any]) -> Optional[str]:
+    country_code = payload.get("country_code")
+    if isinstance(country_code, str) and country_code.strip():
+        return country_code.strip()
+    country = payload.get("country")
+    if isinstance(country, str) and country.strip():
+        return country.strip()
+    country_alt = payload.get("countryCode")
+    if isinstance(country_alt, str) and country_alt.strip():
+        return country_alt.strip()
+    return None
+
+
 def _is_hosting_provider_hint(value: Optional[str]) -> Optional[bool]:
     if not value:
         return None
@@ -65,10 +112,20 @@ def lookup_ipinfo(ip: str, token: str, timeout_seconds: int = DEFAULT_TIMEOUT_SE
     except (requests.RequestException, ValueError):
         return {}
 
-    asn, org_name = _parse_asn_and_org(payload.get("org"))
-    hosting_flag = _is_hosting_provider_hint(payload.get("org"))
+    asn, org_name = _extract_ipinfo_asn_and_org(payload)
+    if not org_name:
+        as_name = payload.get("as_name")
+        if isinstance(as_name, str) and as_name.strip():
+            org_name = as_name.strip()
+    if not org_name:
+        as_domain = payload.get("as_domain")
+        if isinstance(as_domain, str) and as_domain.strip():
+            org_name = as_domain.strip()
+
+    country = _extract_ipinfo_country(payload)
+    hosting_flag = _is_hosting_provider_hint(org_name)
     return {
-        "country": payload.get("country"),
+        "country": country,
         "city": payload.get("city"),
         "asn": asn,
         "org": org_name,
@@ -239,6 +296,7 @@ def compact_cases_for_llm(cases: list[dict]) -> list[dict]:
                 "severity": case.get("severity"),
                 "confidence": case.get("confidence"),
                 "evidence": _compact_evidence(case.get("evidence") or {}),
+                "analysis_context": case.get("analysis_context") or {},
                 "threat_intel": compact_ti,
             }
         )

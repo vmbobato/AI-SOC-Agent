@@ -5,9 +5,11 @@ __pycache__/
 reports/cases*
 reports/incident*
 reports/llm_summary*
+reports/campaigns*
 *.pyc
 *.pyo
 *.pyd
 saved_states/*
 .env
 .soc_agent/
+check_md*
