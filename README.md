@@ -137,3 +137,16 @@ If in Windows:
 ```
 .\soc_agent\Scripts\Activate
 ```
+
+## Next Steps
+
+Add: 
+* Threat Intelligence
+* Response Generation
+* Campaign detection
+
+## Future Vision
+
+Agentic investigation
+Automated timeline building
+Cross-log correlation
