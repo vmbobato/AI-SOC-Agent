@@ -1,14 +1,16 @@
 import json
 import requests
 from typing import List, Dict, Any
+from threat_intel.enrich import compact_cases_for_llm
 
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3"
 
 
-def build_soc_prompt(cases) -> str:
-    cases_json = json.dumps(cases, indent=2)
+def build_soc_prompt(cases: List[Dict[str, Any]]) -> str:
+    compact_cases = compact_cases_for_llm(cases)
+    cases_json = json.dumps(compact_cases, indent=2)
 
     return f"""
 You are a professional SOC (Security Operations Center) analyst.
@@ -24,6 +26,7 @@ IMPORTANT RULES:
 - Do NOT invent vulnerabilities, files, or behaviors that are not in the evidence.
 - If something is uncertain, clearly state that it is uncertain.
 - Be concise and professional.
+- Use threat intelligence fields (if present) to prioritize incidents, but avoid overclaiming.
 - Treat repeated probing of sensitive files or application paths as reconnaissance
   or exploitation attempts.
 - Do not speculate about attacker intent beyond what the evidence suggests.
