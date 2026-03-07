@@ -4,6 +4,7 @@ __pycache__/
 **/__pycache__/
 reports/cases*
 reports/incident*
+reports/llm_summary*
 *.pyc
 *.pyo
 *.pyd

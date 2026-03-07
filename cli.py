@@ -105,6 +105,7 @@ def run(filepath):
         except Exception as e:
             print(f"\nLLM analysis failed: {e}")
 
+
 if __name__ == "__main__":
     running = True
     while running:
