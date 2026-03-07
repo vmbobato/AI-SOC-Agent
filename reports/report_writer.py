@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime, timezone
 import json
+from typing import Any
 
 def _now_tag() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_utc")
@@ -50,6 +51,28 @@ def write_markdown_report(cases, out_dir="reports") -> Path:
                         lines.append(f"  - {kk}: {vv}")
                 else:
                     lines.append(f"- **{k}**: {v}")
+        lines.append("")
+
+        lines.append("### Threat Intelligence")
+        threat_intel = c.get("threat_intel") or {}
+        if not threat_intel:
+            lines.append("- (none)")
+        else:
+            for ip, intel in threat_intel.items():
+                if not isinstance(intel, dict):
+                    continue
+                lines.append(f"- **IP:** {ip}")
+                lines.append(f"  - Status: {intel.get('intel_status', 'unknown')}")
+                lines.append(f"  - Country: {intel.get('country') or 'N/A'}")
+                lines.append(f"  - City: {intel.get('city') or 'N/A'}")
+                lines.append(f"  - ASN: {intel.get('asn') or 'N/A'}")
+                lines.append(f"  - Org: {intel.get('org') or 'N/A'}")
+                lines.append(f"  - Infrastructure: {intel.get('is_hosting_provider')}")
+                lines.append(f"  - Abuse Score: {intel.get('abuse_confidence_score')}")
+                lines.append(f"  - Abuse Reports: {intel.get('abuse_reports')}")
+                source_value: Any = intel.get("source") or []
+                source_str = ", ".join(source_value) if isinstance(source_value, list) else str(source_value)
+                lines.append(f"  - Intel Sources: {source_str or 'N/A'}")
         lines.append("")
 
         lines.append("### Recommended Actions")
