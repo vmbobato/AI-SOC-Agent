@@ -1,11 +1,14 @@
 import json
 import requests
+from openai import OpenAI
 from typing import List, Dict, Any
 from threat_intel.enrich import compact_cases_for_llm
 
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3"
+
+OPENAI_MODEL = "gpt-4.1"
 
 
 def build_soc_prompt(cases: List[Dict[str, Any]]) -> str:
@@ -20,18 +23,32 @@ accurate analyst report.
 
 The cases were generated automatically from server logs by a detection engine.
 
-IMPORTANT RULES:
+You must behave like a cautious SOC analyst performing log triage.
 
-- Only use the evidence provided in the cases.
-- Do NOT invent vulnerabilities, files, or behaviors that are not in the evidence.
-- If something is uncertain, clearly state that it is uncertain.
-- Be concise and professional.
-- Use threat intelligence fields (if present) to prioritize incidents, but avoid overclaiming.
-- Treat repeated probing of sensitive files or application paths as reconnaissance
-  or exploitation attempts.
-- Do not speculate about attacker intent beyond what the evidence suggests.
+--------------------------------------------------
+STRICT ANALYSIS RULES
+--------------------------------------------------
 
-Attack priority guidance:
+1. Use ONLY the information provided in the case data.
+2. Do NOT invent vulnerabilities, attacker intent, files, endpoints, infrastructure, or locations.
+3. Do NOT infer geolocation, hosting providers, threat actors, or campaigns unless explicitly present.
+4. If evidence is insufficient for a claim, explicitly state that the conclusion is uncertain.
+5. Never assume compromise unless the evidence explicitly shows successful access.
+6. Do not reference files such as ".env", "phpunit", ".git", etc unless they appear in the case evidence.
+7. When referencing evidence, cite the specific paths, counts, or fields provided.
+8. If multiple incidents involve the same source IP, mention this correlation.
+9. Pay special attention to any HTTP 200 responses in scanning activity, as these may indicate exposed endpoints.
+10. If threat intelligence fields exist (reputation, ASN, abuse score, etc), use them cautiously to prioritize risk but do not overclaim.
+
+If the available evidence does not support a conclusion, clearly say:
+
+"Evidence is insufficient to determine X."
+
+--------------------------------------------------
+ATTACK PRIORITY GUIDANCE
+--------------------------------------------------
+
+Prioritize incidents in the following order:
 
 1. Exploitation attempts
 2. Application-layer probes or blocked exploit attempts
@@ -39,49 +56,59 @@ Attack priority guidance:
 4. Brute force attempts
 5. Traffic anomalies or bursts
 
-When referencing evidence:
-- Only reference paths, IPs, user agents, and counts present in the case data.
-- Do not assume additional files (ex: .env, phpunit, etc) unless explicitly present.
-
-Output format must be Markdown.
-
+--------------------------------------------------
+OUTPUT FORMAT
 --------------------------------------------------
 
+Your output must be Markdown.
+
+--------------------------------------------------
 # AI SOC Analyst Summary
 
 ## Executive Summary
-Provide a short high-level summary of the overall activity detected across all cases.
 
-Focus on:
-- attacker behavior
+Provide a short high-level summary of the activity detected across all incidents.
+
+Include:
 - number of incidents
-- whether the activity appears to be scanning, probing, exploitation attempts,
+- attacker behavior patterns
+- whether activity appears to be reconnaissance, probing, exploitation attempts,
   brute force attempts, or service abuse.
 
-Keep this section brief (3–5 sentences).
+Mention if multiple incidents appear to originate from the same source IP.
+
+Limit to 3–5 sentences.
 
 --------------------------------------------------
 
 ## Incident Breakdown
 
-For each case include:
+For each case include the following section:
 
 ### Incident: <incident_type>
 
 **Impact**
-Explain why this behavior matters from a security perspective.
+
+Explain why this activity is relevant from a security perspective.
+
+Do not speculate beyond the evidence.
 
 **Evidence Observed**
-Summarize the key evidence such as:
+
+Summarize key indicators from the case data such as:
+
 - request counts
 - targeted paths
-- error ratios
+- HTTP status ratios
+- user agents
+- blocked requests
 - suspicious patterns
 
-Use only the data provided.
+Only reference data present in the case.
 
 **Assessment**
-Classify the behavior as one of the following:
+
+Classify the behavior as ONE of the following:
 
 - Reconnaissance / scanning
 - Exploitation attempt
@@ -89,10 +116,13 @@ Classify the behavior as one of the following:
 - Service abuse / DoS
 - Suspicious but inconclusive
 
-Explain briefly why.
+Briefly justify the classification using the observed evidence.
 
 **Confidence Reasoning**
-Explain why the detection is high, medium, or low confidence.
+
+Explain why the detection appears high, medium, or low confidence.
+
+Base reasoning strictly on the evidence.
 
 --------------------------------------------------
 
@@ -100,35 +130,38 @@ Explain why the detection is high, medium, or low confidence.
 
 Identify:
 
-- The highest priority incident
-- Why it should be prioritized
-- Whether there is any evidence suggesting successful exposure or compromise.
+- the highest priority incident
+- why it should be prioritized
+- whether any evidence suggests successful exposure or compromise
 
-If there is no evidence of compromise, explicitly state that.
+If there is no evidence of compromise, clearly state:
+
+"No evidence of successful compromise was observed."
 
 --------------------------------------------------
 
 ## Recommended Next Actions
 
-Provide practical next steps for a security engineer or SOC analyst.
+Provide realistic operational steps for a security engineer or SOC analyst.
 
-Examples:
+Examples include:
 
-- Block offending IP addresses
-- Enable WAF rate limiting
-- Review server logs for successful responses
-- Monitor for repeated activity
-- Harden exposed endpoints
+- block offending IP addresses
+- enable or tune WAF rules
+- review server logs for successful responses
+- monitor for repeated activity
+- investigate successful HTTP responses during scans
+- harden exposed endpoints
 
-Recommendations should be realistic and operational.
+Recommendations must be grounded in the observed activity.
 
 --------------------------------------------------
 
 ## MITRE ATT&CK Mapping
 
-Map each incident to relevant ATT&CK techniques where appropriate.
+Map each incident to relevant ATT&CK techniques **only if the evidence supports it**.
 
-Common mappings for web attacks include:
+Examples for web attacks:
 
 Reconnaissance
 - T1595 – Active Scanning
@@ -139,7 +172,11 @@ Initial Access
 Discovery
 - T1046 – Network Service Discovery
 
-Only map techniques that are supported by the evidence.
+For each technique provide a short justification.
+
+If mapping is uncertain, state:
+
+"Evidence insufficient for confident MITRE mapping."
 
 Do NOT invent techniques.
 
@@ -149,6 +186,18 @@ Here are the structured incident cases:
 
 {cases_json}
 """.strip()
+
+
+def analyze_cases_with_openai(
+    cases: List[Dict[str, Any]],
+    model: str = OPENAI_MODEL,
+):
+    client = OpenAI()
+    response = client.responses.create(
+        model=model,
+        input=build_soc_prompt(cases)
+    )
+    return response.output_text
 
 
 def analyze_cases_with_ollama(
