@@ -135,5 +135,5 @@ source .soc_agent/bin/activate
 
 If in Windows:
 ```
-source .soc_agent/Scripts/Activate
+.\soc_agent\Scripts\Activate
 ```
