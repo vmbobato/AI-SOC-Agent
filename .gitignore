@@ -9,3 +9,5 @@ reports/llm_summary*
 *.pyo
 *.pyd
 saved_states/*
+.env
+.soc_agent/

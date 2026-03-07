@@ -8,8 +8,10 @@ from parsers.nginx_parser import parse_nginx_access_line, parse_nginx_error_line
 from parsers.eb_log_parser import parse_eb_engine_line, parse_eb_hooks_line
 from parsers.web_stdout_parser import parse_web_stdout_line
 from detections.engine import run_detections
-from llm.incident_analyzer import analyze_cases_with_ollama
+from llm.incident_analyzer import analyze_cases_with_ollama, analyze_cases_with_openai
 from reports.llm_report_writer import write_llm_summary
+from threat_intel.enrich import enrich_cases_with_threat_intel
+
 
 
 PARSERS = {
@@ -83,6 +85,7 @@ def run(filepath):
         dos_rpm_threshold=120,
         window_minutes=2,
     )
+    cases = enrich_cases_with_threat_intel(cases)
     report_path = write_markdown_report(cases, out_dir="reports")
     json_path = write_json_cases(cases, out_dir="reports")
     print(f"\nReport saved to: {report_path}")
@@ -97,7 +100,8 @@ def run(filepath):
     if cases:
         try:
             start = time.time()
-            llm_summary = analyze_cases_with_ollama(cases, model="llama3", timeout=1000)
+            #llm_summary = analyze_cases_with_ollama(cases, model="llama3", timeout=1000)
+            llm_summary = analyze_cases_with_openai(cases, model="gpt-4.1")
             llm_summary_path = write_llm_summary(llm_summary, out_dir="reports")
             print(f"\nLLM summary saved to: {llm_summary_path}")
             end = time.time()

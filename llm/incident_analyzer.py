@@ -182,6 +182,8 @@ Do NOT invent techniques.
 
 --------------------------------------------------
 
+Before writing the report, internally review the evidence and ensure all conclusions are supported by the case data.
+
 Here are the structured incident cases:
 
 {cases_json}

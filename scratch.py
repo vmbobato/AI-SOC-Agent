@@ -1,12 +1,12 @@
-import requests
+from openai import OpenAI
+from dotenv import load_dotenv
+load_dotenv()
 
-resp = requests.post(
-    "http://localhost:11434/api/generate",
-    json={
-        "model": "llama3",
-        "prompt": "Explain what a web enumeration scan is in cybersecurity.",
-        "stream": False
-    }
+client = OpenAI()
+
+response = client.responses.create(
+    model="gpt-5.4",
+    input="Write a one-sentence bedtime story about a unicorn."
 )
 
-print(resp.json()["response"])
+print(response.output_text)
