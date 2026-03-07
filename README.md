@@ -1,152 +1,230 @@
 # AI SOC Agent
 
-## Overview
-AI SOC Agent is an AI-assisted Security Operations Center (SOC) pipeline that analyzes infrastructure logs, detects suspicious activity, and generates automated analyst reports using a local Large Language Model (LLM).
+AI SOC Agent is a local SOC analysis pipeline that:
 
-The system parses server logs, detects attack patterns such as web scanning, exploit probing, and traffic bursts, and produces structured incident cases that are summarized into a professional SOC analyst report.
+1. Parses infrastructure and application logs
+2. Detects suspicious behavior
+3. Builds structured incident cases
+4. Enriches attacker IPs with threat intelligence
+5. Generates markdown/JSON reports
+6. Produces an LLM SOC analyst summary
 
-This project demonstrates how AI can augment security analysts by automating log analysis and incident reporting.
+## Current Architecture
 
----
+This repository currently runs as a local CLI workflow (no AWS module in the current tree).
 
-## Features
+### Pipeline layers
 
-* Multi-log parsing (Nginx, application logs, AWS Elastic Beanstalk logs)
-* Detection of common web attack behaviors
-* Structured incident case generation
-* Automated SOC analyst reports using an LLM
-* MITRE ATT&CK mapping for detected activity
-* Local LLM integration using Ollama
+1. `ingestion`: reads log files line-by-line (`ingest/log_reader.py`)
+2. `detection_engine`: builds cases from parsed events (`detections/engine.py`)
+3. `threat_intel`: enriches case source IPs (`threat_intel/enrich.py`)
+4. `llm_analysis`: summarizes cases with Ollama (`llm/incident_analyzer.py`)
+5. `reporting`: writes markdown + JSON + LLM summary files (`reports/*`)
 
----
+### Main execution flow
 
-## Example Attacks Detected
+Entry point: `cli.py`
 
-The system can detect patterns such as:
+1. `cli.py` reads a bundled log file (default: `data/last_100_log_3-5-2026/example_2.log`)
+2. The parser context switches based on section headers like:
+   - `/var/log/nginx/access.log`
+   - `/var/log/nginx/error.log`
+   - `/var/log/web.stdout.log`
+   - `/var/log/eb-engine.log`
+   - `/var/log/eb-hooks.log`
+3. Parsed events are sent to `run_detections(...)`
+4. Cases are enriched with threat intel via `enrich_cases_with_threat_intel(...)`
+5. Reports are written to `reports/`
+6. If cases exist, an LLM summary is generated and saved
 
-| Detection | Description |
-|----------|--------------|
-| **Web Enumaration** | Attackers scanning large numbers of URLs |
-| **Sensitive File Probes** | Attempts to access configuration or secret files |
-| **Application-Layer Probing** | Repeated attempts blocked by application logic |
-| **Traffic Bursts** | Potential DoS behavior |
-| **Brute Force Attempts** | Repeated login failures |
+## Detection Coverage
 
+Implemented detections:
 
----
+1. Web Enumeration Scan
+2. Sensitive File / Exploit Probe
+3. Blocked App-Layer Probe
+4. Brute Force Attempt
+5. Traffic Burst / Possible DoS
 
-## Project Architecture
+## Threat Intelligence Enrichment
 
-```
-Logs
-  ↓
-Log Parsers
-  ↓
-Detection Engine
-  ↓
-Incident Case Builder
-  ↓
-Case Merger
-  ↓
-Structured Incident JSON
-  ↓
-LLM SOC Analyst
-  ↓
-Markdown Incident Report
-```
+Threat intel is attached per case under `case["threat_intel"]`.
 
----
+### Providers
 
-## Detection Engine
+1. IPinfo (geo/org/asn context)
+2. AbuseIPDB (abuse score/report count context)
 
-The detection engine analyzes parsed log events to identify attack patterns.  
+### Safe IP handling
 
-Current detection modules include:
+IPs are classified before enrichment. The pipeline skips:
 
-### Web Enumaration Detection
+1. Private IPs
+2. Loopback
+3. Link-local
+4. Reserved/multicast/unspecified
+5. Invalid IP strings
 
-Identifies automated directory scanning.  
+Skipped values are marked with `intel_status` (for example: `skipped_private_ip`).
 
-Indicators:  
-* Large number of unique paths
-* High ratio of 404 responses
-* Short time window
+### Behavior when keys are missing
 
-### Sensitive File Probing
+If provider keys are not configured, pipeline execution continues and marks public IP enrichment as `skipped_no_api_keys`.
 
-Detects attempts to access sensitive application files.  
+## LLM Summary Layer
 
-Examples:  
-```
-/phpinfo
-/.git/config
-/config.yaml
-/.env
-```
+LLM analysis runs through Ollama using:
 
-### Applicaation Layer Probing
+1. URL: `http://localhost:11434/api/generate`
+2. Model default in code: `llama3`
 
-Detects repeated attempts blocked by applciation logic.
+Before prompt generation, cases are compacted with `compact_cases_for_llm(...)` to include normalized intel fields without noisy raw payloads.
 
-Examples:
-```
-secret_path
-bogus_stack_probe
-```
+## Project Structure
 
-### Traffic Burst Detection
-
-Identifies potential denial-of-service behavior based on request volume.
-
----
-
-## LLM Integration
-
-The system uses a local LLM via Ollama to convert structured incident data into a human-readable SOC report.  
-
-This allows the system to act as an AI SOC analyst assistant.  
-
-The LLM produces:  
-* Executive summary
-* Incident breakdown
-* Priority assessment
-* Recommended actions
-* MITRE ATT&CK mapping
-
----
-
-## Intallation
-
-Clone the repository:  
-```
-git clone https://github.com/AI-SOC-Agent/ai-soc-agent.git
-cd ai-soc-agent
+```text
+.
+├── cli.py
+├── ingest/
+│   └── log_reader.py
+├── parsers/
+│   ├── nginx_parser.py
+│   ├── web_stdout_parser.py
+│   └── eb_log_parser.py
+├── detections/
+│   └── engine.py
+├── threat_intel/
+│   ├── __init__.py
+│   └── enrich.py
+├── llm/
+│   └── incident_analyzer.py
+├── reports/
+│   ├── report_writer.py
+│   └── llm_report_writer.py
+├── data/
+├── saved_states/
+└── requirements.txt
 ```
 
-Create environment:
-```
+## Requirements
+
+`requirements.txt` is version pinned:
+
+1. `pandas==3.0.1`
+2. `numpy==2.4.2`
+3. `requests==2.32.5`
+4. `python-dotenv==1.0.1`
+
+## Setup
+
+1. Create venv:
+
+```bash
 python3 -m venv .soc_agent
 ```
 
-If in Linux:
-```
+2. Activate:
+
+Linux/macOS:
+
+```bash
 source .soc_agent/bin/activate
 ```
 
-If in Windows:
+Windows PowerShell:
+
+```powershell
+.\.soc_agent\Scripts\Activate.ps1
 ```
-.\soc_agent\Scripts\Activate
+
+3. Install deps:
+
+```bash
+pip install -r requirements.txt
 ```
 
-## Next Steps
+4. (Optional) configure `.env` in repo root for threat intel:
 
-Add: 
-* Threat Intelligence
-* Response Generation
-* Campaign detection
+```env
+AUTH_BEARER_IP_INFO=your_ipinfo_token
+ABUSEIPDB_API_KEY=your_abuseipdb_api_key
+```
 
-## Future Vision
+Notes:
 
-Agentic investigation
-Automated timeline building
-Cross-log correlation
+1. `threat_intel/enrich.py` calls `load_dotenv()`, so `.env` is auto-loaded.
+2. Current code reads `AUTH_BEARER_IP_INFO` for IPinfo auth token.
+
+5. Start Ollama (optional but needed for LLM summary):
+
+```bash
+ollama serve
+ollama pull llama3
+```
+
+## Running the Project
+
+### Interactive mode
+
+```bash
+python cli.py
+```
+
+Available commands:
+
+1. `run` -> executes full pipeline on the default sample file
+2. `exit` -> exits and saves state JSON into `saved_states/`
+
+### Run against a custom file path
+
+```bash
+python -c "import cli; cli.run('path/to/your_log_file.log')"
+```
+
+## Outputs
+
+Generated artifacts:
+
+1. Incident markdown report: `reports/incident_report_<timestamp>.md`
+2. Cases JSON: `reports/cases_<timestamp>.json`
+3. LLM markdown summary (if cases exist): `reports/llm_summary_<timestamp>.md`
+4. Session state on exit: `saved_states/<timestamp>_Saved-State.json`
+
+## Case Schema (simplified)
+
+Each case includes:
+
+1. `incident_type`
+2. `timestamp_start`, `timestamp_end`
+3. `source_ips`
+4. `evidence`
+5. `severity`, `confidence`
+6. `recommended_actions`
+7. `threat_intel` (added during enrichment)
+
+Example threat intel block:
+
+```json
+{
+  "threat_intel": {
+    "84.247.182.240": {
+      "intel_status": "enriched",
+      "country": "NL",
+      "city": "Amsterdam",
+      "asn": "AS12345",
+      "org": "Example ISP",
+      "is_hosting_provider": true,
+      "abuse_confidence_score": 67,
+      "abuse_reports": 24,
+      "source": ["ipinfo", "abuseipdb"]
+    }
+  }
+}
+```
+
+## Operational Notes
+
+1. If external TI providers are unreachable, enrichment fails gracefully and detection/reporting still complete.
+2. Logs are consumed as input only; outputs are written as new files.
+3. This repo currently does not include automated detection tests yet; adding tests for each detector is recommended as the next hardening step.
