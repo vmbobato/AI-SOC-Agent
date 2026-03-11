@@ -230,7 +230,7 @@ def _enrich_ip(ip: str, ipinfo_token: str, abuse_key: str) -> Dict[str, Any]:
 
 
 def enrich_cases_with_threat_intel(cases: list[dict]) -> list[dict]:
-    ipinfo_token = os.getenv("AUTH_BEARER_IP_INFO").strip()
+    ipinfo_token = os.getenv("AUTH_BEARER_IP_INFO", "").strip()
     abuse_key = os.getenv("ABUSEIPDB_API_KEY", "").strip()
     unique_ips = _extract_source_ips(cases)
     intel_by_ip = {ip: _enrich_ip(ip, ipinfo_token=ipinfo_token, abuse_key=abuse_key) for ip in unique_ips}

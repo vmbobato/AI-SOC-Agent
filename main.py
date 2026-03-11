@@ -79,9 +79,6 @@ def run(filepath):
                 evt = parse_generic_line(line, CURRENT_STATE["next_parser"])
                 events.append(evt)
 
-    print("Parsed OK:", parsed_ok)
-    print("Parsed FAIL:", parsed_fail)
-
     print(f"Parsed events: {len(events)}")
 
     cases = run_detections(
@@ -125,6 +122,7 @@ def run(filepath):
             print(f"\nLLM took {end - start:.2f} seconds to give an asnwer. ")
         except Exception as e:
             print(f"\nLLM analysis failed: {e}")
+
 
 
 if __name__ == "__main__":

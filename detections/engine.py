@@ -86,6 +86,10 @@ def detect_web_scans(df, window_minutes, unique_paths_threshold, ratio_404_thres
 
 
 def detect_bruteforce(df, window_minutes, brute_force_threshold):
+    required_columns = {"method", "path", "status", "client_ip", "ts"}
+    if not required_columns.issubset(df.columns):
+        return []
+
     df = df.copy()
     df["win"] = _window_key(df["ts"], window_minutes)
 
