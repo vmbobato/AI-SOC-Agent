@@ -61,6 +61,29 @@ class DetectionEngineTests(unittest.TestCase):
 
         self.assertIn("Web Enumeration Scan", incident_types)
 
+    def test_web_scan_tracks_exact_successful_200_paths(self) -> None:
+        events = [
+            _access_event(
+                timestamp=f"2026-03-05T01:08:{i:02d}+00:00",
+                client_ip="203.0.113.12",
+                path=f"/scan-{i}",
+                status=404,
+            )
+            for i in range(39)
+        ]
+        events.append(
+            _access_event(
+                timestamp="2026-03-05T01:08:59+00:00",
+                client_ip="203.0.113.12",
+                path="/admin/health",
+                status=200,
+            )
+        )
+
+        cases = run_detections(events)
+        scan_case = next(case for case in cases if case["incident_type"] == "Web Enumeration Scan")
+        self.assertEqual(scan_case["evidence"]["successful_paths"], ["/admin/health"])
+
     def test_detects_sensitive_file_probe(self) -> None:
         paths = ["/.env", "/.git/config", "/phpinfo", "/vendor/phpunit/eval-stdin.php", "/adminer"]
         events = [
@@ -143,6 +166,7 @@ class DetectionEngineTests(unittest.TestCase):
                 "unique_paths": 45,
                 "unique_ratio": 0.9,
                 "404_ratio": 0.9,
+                "successful_paths": ["/ok-a"],
                 "top_paths": {"/a": 30},
                 "status_counts": {404: 50},
             },
@@ -158,6 +182,7 @@ class DetectionEngineTests(unittest.TestCase):
                 "unique_paths": 20,
                 "unique_ratio": 0.67,
                 "404_ratio": 0.85,
+                "successful_paths": ["/ok-b"],
                 "top_paths": {"/b": 10},
                 "status_counts": {404: 30},
             },
@@ -168,6 +193,7 @@ class DetectionEngineTests(unittest.TestCase):
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["timestamp_end"], "2026-03-05T01:04:00+00:00")
         self.assertEqual(merged[0]["evidence"]["requests"], 80)
+        self.assertEqual(merged[0]["evidence"]["successful_paths"], ["/ok-a", "/ok-b"])
         self.assertEqual(merged[0]["severity"], "Medium")
         self.assertEqual(merged[0]["confidence"], 0.8)
 

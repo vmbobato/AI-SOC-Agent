@@ -1,6 +1,5 @@
 import json
 import requests
-from openai import OpenAI
 from typing import List, Dict, Any
 from llm.analysis_context import prepare_cases_for_llm
 from correlation.campaigns import prepare_campaigns_for_llm
@@ -317,6 +316,8 @@ def analyze_cases_with_openai(
     campaigns: List[Dict[str, Any]] | None = None,
     model: str = OPENAI_MODEL,
 ):
+    from openai import OpenAI
+
     client = OpenAI()
     response = client.responses.create(
         model=model,

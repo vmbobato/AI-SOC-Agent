@@ -203,3 +203,22 @@ def write_json_campaigns(campaigns, out_dir="reports") -> Path:
     out_path = out_dir / f"campaigns_{tag}.json"
     out_path.write_text(json.dumps(campaigns, indent=2), encoding="utf-8")
     return out_path
+
+
+def write_json_alerts(alerts, out_dir="reports") -> Path:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    tag = _now_tag()
+    out_path = out_dir / f"alerts_{tag}.json"
+    out_path.write_text(json.dumps(alerts, indent=2), encoding="utf-8")
+    return out_path
+
+
+def write_json_run_metadata(metadata: dict, run_id: str, out_dir="reports") -> Path:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    out_path = out_dir / f"run_metadata_{run_id}.json"
+    out_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return out_path

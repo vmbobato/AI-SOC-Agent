@@ -31,6 +31,13 @@ def detect_web_scans(df, window_minutes, unique_paths_threshold, ratio_404_thres
         ratio_404 = (g["status"] == 404).mean()
 
         if unique_paths >= unique_paths_threshold and ratio_404 >= ratio_404_threshold:
+            successful_paths = sorted(
+                {
+                    str(path)
+                    for path in g.loc[g["status"] == 200, "path"].dropna().tolist()
+                    if str(path)
+                }
+            )
             # --- severity (simple + explainable) ---
             # bump severity for very high volumes
             if total >= 500:
@@ -69,6 +76,7 @@ def detect_web_scans(df, window_minutes, unique_paths_threshold, ratio_404_thres
                     "unique_paths": int(unique_paths),
                     "unique_ratio": round(float(unique_ratio), 3),
                     "404_ratio": float(ratio_404),
+                    "successful_paths": successful_paths,
                     "top_paths": g["path"].value_counts().head(10).to_dict(),
                     "status_counts": status_counts,
                 },
@@ -220,6 +228,13 @@ def detect_sensitive_file_probes(df, window_minutes, min_hits=5):
         # evidence
         top_paths = g["path"].value_counts().head(15).to_dict()
         status_counts = {int(k): int(v) for k, v in g["status"].value_counts().to_dict().items()}
+        successful_paths = sorted(
+            {
+                str(path)
+                for path in g.loc[g["status"] == 200, "path"].dropna().tolist()
+                if str(path)
+            }
+        )
         # confidence: if they hit many distinct sensitive targets, it's very strong
         distinct_targets = g["path"].nunique()
         confidence = 0.8
@@ -236,6 +251,7 @@ def detect_sensitive_file_probes(df, window_minutes, min_hits=5):
             "evidence": {
                 "hits": hits,
                 "distinct_targets": int(distinct_targets),
+                "successful_paths": successful_paths,
                 "top_paths": top_paths,
                 "status_counts": status_counts,
                 "top_user_agents": g["user_agent"].value_counts().head(5).to_dict() if "user_agent" in g else {},
@@ -271,6 +287,7 @@ def detect_app_blocked_probes(app_df, window_minutes=2, min_hits=5):
             "source_ips": [ip],
             "evidence": {
                 "hits": hits,
+                "successful_paths": [],
                 "reasons": g["reason"].value_counts().to_dict(),
                 "top_paths": g["path"].value_counts().head(10).to_dict(),
                 "top_user_agents": g["user_agent"].value_counts().head(5).to_dict(),
@@ -390,6 +407,17 @@ def merge_cases(cases, gap_minutes=0):
                 ev_last["top_user_agents"] = dict(
                     sorted(combined.items(), key=lambda x: x[1], reverse=True)[:10]
                 )
+
+            # Merge successful_paths
+            if isinstance(ev_last.get("successful_paths"), list) and isinstance(ev_new.get("successful_paths"), list):
+                merged_paths = sorted(
+                    {
+                        str(path)
+                        for path in (ev_last.get("successful_paths") or []) + (ev_new.get("successful_paths") or [])
+                        if isinstance(path, str) and path
+                    }
+                )
+                ev_last["successful_paths"] = merged_paths
 
             last["evidence"] = ev_last
 

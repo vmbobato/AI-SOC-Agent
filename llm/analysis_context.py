@@ -249,6 +249,7 @@ def prepare_cases_for_llm(cases: List[dict]) -> List[dict]:
                     "hits": (case.get("evidence") or {}).get("hits"),
                     "unique_paths": (case.get("evidence") or {}).get("unique_paths"),
                     "status_counts": (case.get("evidence") or {}).get("status_counts"),
+                    "successful_paths": (case.get("evidence") or {}).get("successful_paths") or [],
                     "top_paths": dict(list(((case.get("evidence") or {}).get("top_paths") or {}).items())[:10]),
                     "top_user_agents": dict(list(((case.get("evidence") or {}).get("top_user_agents") or {}).items())[:10]),
                 },

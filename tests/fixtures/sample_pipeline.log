@@ -1,0 +1,16 @@
+/var/log/nginx/access.log
+203.0.113.10 - - [05/Mar/2026:01:00:00 +0000] "GET /scan-1 HTTP/1.1" 404 123 "-" "ReconBot/1.0" "203.0.113.10"
+203.0.113.10 - - [05/Mar/2026:01:00:10 +0000] "GET /scan-2 HTTP/1.1" 404 123 "-" "ReconBot/1.0" "203.0.113.10"
+203.0.113.10 - - [05/Mar/2026:01:00:20 +0000] "GET /scan-3 HTTP/1.1" 404 123 "-" "ReconBot/1.0" "203.0.113.10"
+203.0.113.10 - - [05/Mar/2026:01:00:30 +0000] "GET /scan-4 HTTP/1.1" 404 123 "-" "ReconBot/1.0" "203.0.113.10"
+203.0.113.10 - - [05/Mar/2026:01:00:40 +0000] "GET /scan-5 HTTP/1.1" 404 123 "-" "ReconBot/1.0" "203.0.113.10"
+203.0.113.11 - - [05/Mar/2026:01:01:00 +0000] "POST /login HTTP/1.1" 401 123 "-" "Hydra" "203.0.113.11"
+203.0.113.11 - - [05/Mar/2026:01:01:10 +0000] "POST /login HTTP/1.1" 401 123 "-" "Hydra" "203.0.113.11"
+203.0.113.11 - - [05/Mar/2026:01:01:20 +0000] "POST /login HTTP/1.1" 401 123 "-" "Hydra" "203.0.113.11"
+this line is intentionally malformed and should fallback
+/var/log/web.stdout.log
+Mar  5 01:02:00 ip-10-0-0-1 web[1234]: [2026-03-05 01:02:00,001] WARNING in app: blocked path method=GET path=/secret ip=198.51.100.1 ua=BadBot reason=secret_path sample=a
+Mar  5 01:02:05 ip-10-0-0-1 web[1234]: [2026-03-05 01:02:05,001] WARNING in app: blocked path method=GET path=/secret ip=198.51.100.1 ua=BadBot reason=secret_path sample=b
+Mar  5 01:02:10 ip-10-0-0-1 web[1234]: [2026-03-05 01:02:10,001] WARNING in app: blocked path method=GET path=/secret ip=198.51.100.1 ua=BadBot reason=secret_path sample=c
+Mar  5 01:02:15 ip-10-0-0-1 web[1234]: [2026-03-05 01:02:15,001] WARNING in app: blocked path method=GET path=/secret ip=198.51.100.1 ua=BadBot reason=secret_path sample=d
+Mar  5 01:02:20 ip-10-0-0-1 web[1234]: [2026-03-05 01:02:20,001] WARNING in app: blocked path method=GET path=/secret ip=198.51.100.1 ua=BadBot reason=secret_path sample=e

@@ -6,6 +6,8 @@ reports/cases*
 reports/incident*
 reports/llm_summary*
 reports/campaigns*
+reports/alerts*
+reports/run_*
 *.pyc
 *.pyo
 *.pyd
@@ -13,3 +15,6 @@ saved_states/*
 .env
 .soc_agent/
 check_md*
+.github/
+.mypy_cache/
+.ruff_cache/

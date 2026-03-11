@@ -1,148 +1,76 @@
-import hashlib, json, time
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
 from pathlib import Path
-from datetime import datetime
-from collections import Counter
-from reports.report_writer import write_markdown_report, write_json_cases, write_json_campaigns
-from ingest.log_reader import iter_log_lines
-from parsers.nginx_parser import parse_nginx_access_line, parse_nginx_error_line
-from parsers.eb_log_parser import parse_eb_engine_line, parse_eb_hooks_line
-from parsers.web_stdout_parser import parse_web_stdout_line
-from detections.engine import run_detections
-from llm.incident_analyzer import analyze_cases_with_ollama, analyze_cases_with_openai
-from llm.analysis_context import (
-    build_case_analysis_context,
-    build_control_effectiveness,
-    build_exposure_analysis,
-    extract_case_iocs,
-)
-from reports.llm_report_writer import write_llm_summary
-from threat_intel.enrich import enrich_cases_with_threat_intel
-from correlation.campaigns import build_attack_campaigns
+from typing import Any, Dict
+
+from config.settings import PipelineConfig
+from pipeline.orchestrator import run_pipeline
 
 
-
-PARSERS = {
-    "/var/log/nginx/access.log": parse_nginx_access_line,
-    "/var/log/nginx/error.log": parse_nginx_error_line,
-    "/var/log/web.stdout.log": parse_web_stdout_line,
-    "/var/log/eb-engine.log": parse_eb_engine_line,
-    "/var/log/eb-hooks.log": parse_eb_hooks_line,
+CURRENT_STATE: Dict[str, Any] = {
+    "last_file_read_path": None,
+    "last_file_read_hash": None,
+    "last_file_read_time": None,
+    "last_run_id": None,
 }
 
-CURRENT_STATE = {
-    "last_file_read_path" : None,
-    "last_file_read_hash" : None,
-    "last_file_read_time" : None,
-    "next_parser" : None
-}
 
-def parse_generic_line(line: str, source: str) -> dict:
-    return {
-        "timestamp": None,
-        "source": source,
-        "severity": "unknown",
-        "message": line.strip(),
-        "raw_line": line,
-    }
+def run(filepath: str) -> Dict[str, Any]:
+    config = PipelineConfig.from_env()
+    result = run_pipeline(filepath, config=config)
+
+    if result.status != "completed":
+        print(f"Pipeline status: {result.status}")
+        return result.to_dict()
+
+    print(f"Run ID: {result.run_id}")
+    print(f"Parsed events: {result.counts.get('events', 0)}")
+    print(f"Detected cases: {result.counts.get('cases', 0)}")
+    print(f"Correlated campaigns: {result.counts.get('campaigns', 0)}")
+    print(f"Generated alerts: {result.counts.get('alerts', 0)}")
+
+    for name, path in result.artifacts.items():
+        print(f"{name}: {path}")
+
+    if result.errors:
+        print("Errors:")
+        for error in result.errors:
+            print(f"- {error}")
+
+    CURRENT_STATE["last_file_read_path"] = filepath
+    CURRENT_STATE["last_file_read_hash"] = result.input_sha256
+    CURRENT_STATE["last_file_read_time"] = datetime.now(timezone.utc).isoformat()
+    CURRENT_STATE["last_run_id"] = result.run_id
+
+    return result.to_dict()
 
 
-def run(filepath):
-    global LOG_PATHS, CURRENT_STATE
-    # 1) Point this at your log file
-    log_path = Path(filepath)
-
-    if not log_path.exists():
-        print(f"Log not found: {log_path}")
-        return
-
-    # 2) Read + parse into events
-    events = []
-    parsed_ok = Counter()
-    parsed_fail = Counter()
-
-    for line in iter_log_lines(log_path):
-        evt = None
-        line = line.rstrip("\n")
-        if not line or line.startswith("----"):
-            continue
-        if line in PARSERS:
-            CURRENT_STATE["next_parser"] = line
-            continue
-        parser = PARSERS.get(CURRENT_STATE["next_parser"])
-        evt = parser(line) if parser else None
-        if evt:
-            parsed_ok[CURRENT_STATE["next_parser"]] += 1
-            events.append(evt)
-        else:
-            parsed_fail[CURRENT_STATE["next_parser"]] += 1
-            if CURRENT_STATE["next_parser"]:
-                evt = parse_generic_line(line, CURRENT_STATE["next_parser"])
-                events.append(evt)
-
-    print(f"Parsed events: {len(events)}")
-
-    cases = run_detections(
-        events,
-        scan_unique_paths_threshold=40,
-        scan_404_ratio_threshold=0.85,
-        brute_force_threshold=20,
-        dos_rpm_threshold=120,
-        window_minutes=2,
-    )
-    cases = enrich_cases_with_threat_intel(cases)
-    for idx, case in enumerate(cases, 1):
-        case["case_id"] = f"case-{idx:04d}"
-        case["analysis_context"] = build_case_analysis_context(case)
-        case["ioc_summary"] = extract_case_iocs(case)
-        case["exposure_analysis"] = build_exposure_analysis(case)
-        case["control_effectiveness"] = build_control_effectiveness(case)
-    campaigns = build_attack_campaigns(cases, correlation_window_minutes=60)
-    report_path = write_markdown_report(cases, campaigns=campaigns, out_dir="reports")
-    json_path = write_json_cases(cases, out_dir="reports")
-    campaigns_json_path = write_json_campaigns(campaigns, out_dir="reports")
-    print(f"\nReport saved to: {report_path}")
-    print(f"Cases saved to:  {json_path}")
-    print(f"Campaigns saved to:  {campaigns_json_path}")
-    print(f"Detected cases: {len(cases)}")
-    print(f"Correlated campaigns: {len(campaigns)}")
-    for i, c in enumerate(cases[:5], 1):
-        print(f"\nCase {i}: {c['incident_type']}")
-        print(f"  IPs: {c['source_ips']}")
-        print(f"  Window: {c['timestamp_start']} -> {c['timestamp_end']}")
-        print(f"  Severity: {c.get('severity')}  Confidence: {c.get('confidence')}")
-        print(f"  Evidence keys: {list((c.get('evidence') or {}).keys())}")
-    if cases:
-        try:
-            start = time.time()
-            #llm_summary = analyze_cases_with_ollama(cases, campaigns=campaigns, model="llama3", timeout=1000)
-            llm_summary = analyze_cases_with_openai(cases, campaigns=campaigns, model="gpt-4.1")
-            llm_summary_path = write_llm_summary(llm_summary, out_dir="reports")
-            print(f"\nLLM summary saved to: {llm_summary_path}")
-            end = time.time()
-            print(f"\nLLM took {end - start:.2f} seconds to give an asnwer. ")
-        except Exception as e:
-            print(f"\nLLM analysis failed: {e}")
-
+def _save_state() -> None:
+    saved_state_dir = Path("saved_states")
+    saved_state_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M_Saved-State")
+    state_path = saved_state_dir / f"{timestamp}.json"
+    state_path.write_text(json.dumps(CURRENT_STATE, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":
     running = True
+    default_path = "data/last_100_log_3-5-2026/example_2.log"
+
     while running:
         try:
-            cmd = input("\n[SOC AGENT] $ ")
+            cmd = input("\n[SOC AGENT] $ ").strip()
             if cmd == "run":
-                path = "data/last_100_log_3-5-2026/example_2.log"
-                CURRENT_STATE["last_file_read_time"] = datetime.now().strftime("%Y/%m/%d -- %H:%M:%S")
-                run(path)
-                with open(path, "rb") as file:
-                    digest = hashlib.file_digest(file, "sha256").hexdigest()
-                    CURRENT_STATE['last_file_read_hash'] = digest
-                CURRENT_STATE["last_file_read_path"] = path
-            if cmd == "exit":
+                run(default_path)
+            elif cmd.startswith("run "):
+                custom_path = cmd.split(" ", maxsplit=1)[1].strip()
+                run(custom_path)
+            elif cmd == "exit":
                 running = False
-        except KeyboardInterrupt as e:
+        except KeyboardInterrupt:
             running = False
-            
-    with open(f"saved_states/{datetime.now().strftime("%Y-%m-%d_%H-%M_Saved-State")}.json", "w") as f:
-        json.dump(CURRENT_STATE, f, indent=4)
+
+    _save_state()
     print("\nClosing Agent...\nBye!\n")

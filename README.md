@@ -18,14 +18,15 @@ This repository currently runs as a local CLI workflow (no AWS module in the cur
 1. `ingestion`: reads log files line-by-line (`ingest/log_reader.py`)
 2. `detection_engine`: builds cases from parsed events (`detections/engine.py`)
 3. `threat_intel`: enriches case source IPs (`threat_intel/enrich.py`)
-4. `llm_analysis`: summarizes cases with Ollama (`llm/incident_analyzer.py`)
-5. `reporting`: writes markdown + JSON + LLM summary files (`reports/*`)
+4. `llm_analysis`: summarizes cases with Ollama/OpenAI (`llm/incident_analyzer.py`)
+5. `alert_pipeline`: creates normalized, deduplicated alerts (`alert_pipeline/alerts.py`)
+6. `reporting`: writes markdown + JSON + run metadata files (`reports/*`)
 
 ### Main execution flow
 
-Entry point: `cli.py`
+Entry points: `main.py` (CLI) and `api/app.py` (FastAPI control plane).
 
-1. `cli.py` reads a bundled log file (default: `data/last_100_log_3-5-2026/example_2.log`)
+1. `pipeline/orchestrator.py` reads and parses a log file by section headers
 2. The parser context switches based on section headers like:
    - `/var/log/nginx/access.log`
    - `/var/log/nginx/error.log`
@@ -34,8 +35,10 @@ Entry point: `cli.py`
    - `/var/log/eb-hooks.log`
 3. Parsed events are sent to `run_detections(...)`
 4. Cases are enriched with threat intel via `enrich_cases_with_threat_intel(...)`
-5. Reports are written to `reports/`
-6. If cases exist, an LLM summary is generated and saved
+5. Cases are correlated into campaigns
+6. Alerts are generated via `build_alerts(...)`
+7. Reports and metadata are written to `reports/`
+8. If enabled (`SOC_LLM_ENABLED=true`), an LLM summary is generated and saved
 
 ## Detection Coverage
 
@@ -85,7 +88,15 @@ Before prompt generation, cases are compacted with `compact_cases_for_llm(...)` 
 
 ```text
 .
-├── cli.py
+├── main.py
+├── pipeline/
+│   └── orchestrator.py
+├── config/
+│   └── settings.py
+├── models/
+│   └── schemas.py
+├── alert_pipeline/
+│   └── alerts.py
 ├── ingest/
 │   └── log_reader.py
 ├── parsers/
@@ -102,6 +113,8 @@ Before prompt generation, cases are compacted with `compact_cases_for_llm(...)` 
 ├── reports/
 │   ├── report_writer.py
 │   └── llm_report_writer.py
+├── api/
+│   └── app.py
 ├── data/
 ├── saved_states/
 └── requirements.txt
@@ -168,7 +181,7 @@ ollama pull llama3
 ### Interactive mode
 
 ```bash
-python cli.py
+python main.py
 ```
 
 Available commands:
@@ -179,8 +192,24 @@ Available commands:
 ### Run against a custom file path
 
 ```bash
-python -c "import cli; cli.run('path/to/your_log_file.log')"
+python -c "import main; main.run('path/to/your_log_file.log')"
 ```
+
+### API mode (control plane)
+
+Run with Uvicorn:
+
+```bash
+uvicorn api.app:app --reload
+```
+
+Endpoints:
+
+1. `POST /pipeline/run?filepath=/path/to/log`
+2. `GET /pipeline/runs/{run_id}`
+3. `GET /pipeline/runs/{run_id}/cases`
+4. `GET /pipeline/runs/{run_id}/campaigns`
+5. `GET /pipeline/runs/{run_id}/alerts`
 
 ## Outputs
 
@@ -188,8 +217,11 @@ Generated artifacts:
 
 1. Incident markdown report: `reports/incident_report_<timestamp>.md`
 2. Cases JSON: `reports/cases_<timestamp>.json`
-3. LLM markdown summary (if cases exist): `reports/llm_summary_<timestamp>.md`
-4. Session state on exit: `saved_states/<timestamp>_Saved-State.json`
+3. Campaigns JSON: `reports/campaigns_<timestamp>.json`
+4. Alerts JSON: `reports/alerts_<timestamp>.json`
+5. Run metadata JSON: `reports/run_metadata_<run_id>.json`
+6. LLM markdown summary (if enabled and cases exist): `reports/llm_summary_<timestamp>.md`
+7. Session state on exit: `saved_states/<timestamp>_Saved-State.json`
 
 ## Case Schema (simplified)
 
