@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
 from config.settings import PipelineConfig
 from pipeline.orchestrator import run_pipeline
+from utils.timezone import local_tag, now_local_iso
 
 
 CURRENT_STATE: Dict[str, Any] = {
@@ -41,7 +41,7 @@ def run(filepath: str) -> Dict[str, Any]:
 
     CURRENT_STATE["last_file_read_path"] = filepath
     CURRENT_STATE["last_file_read_hash"] = result.input_sha256
-    CURRENT_STATE["last_file_read_time"] = datetime.now(timezone.utc).isoformat()
+    CURRENT_STATE["last_file_read_time"] = now_local_iso()
     CURRENT_STATE["last_run_id"] = result.run_id
 
     return result.to_dict()
@@ -50,7 +50,7 @@ def run(filepath: str) -> Dict[str, Any]:
 def _save_state() -> None:
     saved_state_dir = Path("saved_states")
     saved_state_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M_Saved-State")
+    timestamp = local_tag().replace("_ct", "_Saved-State")
     state_path = saved_state_dir / f"{timestamp}.json"
     state_path.write_text(json.dumps(CURRENT_STATE, indent=2), encoding="utf-8")
 

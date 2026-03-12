@@ -4,7 +4,6 @@ import hashlib
 import json
 import time
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -33,6 +32,7 @@ from reports.report_writer import (
     write_markdown_report,
 )
 from threat_intel.enrich import enrich_cases_with_threat_intel
+from utils.timezone import APP_TIMEZONE_NAME, iso_to_local, local_tag_precise, now_local_iso
 
 
 ParserFn = Callable[[str], Optional[Dict[str, Any]]]
@@ -57,7 +57,7 @@ def parse_generic_line(line: str, source: str) -> Dict[str, Any]:
 
 
 def _now_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_utc")
+    return local_tag_precise()
 
 
 def _sha256(path: Path) -> str:
@@ -151,8 +151,69 @@ def _run_llm_summary(
     return write_llm_summary(summary, out_dir=out_dir)
 
 
+def _localize_case_timestamps(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    localized: List[Dict[str, Any]] = []
+    for case in cases:
+        clone = dict(case)
+        start = clone.get("timestamp_start")
+        end = clone.get("timestamp_end")
+        if isinstance(start, str):
+            clone["timestamp_start"] = iso_to_local(start)
+        if isinstance(end, str):
+            clone["timestamp_end"] = iso_to_local(end)
+        localized.append(clone)
+    return localized
+
+
+def _localize_campaign_timestamps(campaigns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    localized: List[Dict[str, Any]] = []
+    for campaign in campaigns:
+        clone = dict(campaign)
+        first_seen = clone.get("first_seen")
+        last_seen = clone.get("last_seen")
+        if isinstance(first_seen, str):
+            clone["first_seen"] = iso_to_local(first_seen)
+        if isinstance(last_seen, str):
+            clone["last_seen"] = iso_to_local(last_seen)
+
+        timeline = clone.get("timeline")
+        if isinstance(timeline, list):
+            updated_timeline: List[Dict[str, Any]] = []
+            for item in timeline:
+                if not isinstance(item, dict):
+                    continue
+                timeline_item = dict(item)
+                ts_start = timeline_item.get("timestamp_start")
+                ts_end = timeline_item.get("timestamp_end")
+                if isinstance(ts_start, str):
+                    timeline_item["timestamp_start"] = iso_to_local(ts_start)
+                if isinstance(ts_end, str):
+                    timeline_item["timestamp_end"] = iso_to_local(ts_end)
+                updated_timeline.append(timeline_item)
+            clone["timeline"] = updated_timeline
+        localized.append(clone)
+    return localized
+
+
+def _localize_alert_timestamps(alerts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    localized: List[Dict[str, Any]] = []
+    for alert in alerts:
+        clone = dict(alert)
+        start = clone.get("timestamp_start")
+        end = clone.get("timestamp_end")
+        if isinstance(start, str):
+            clone["timestamp_start"] = iso_to_local(start)
+        if isinstance(end, str):
+            clone["timestamp_end"] = iso_to_local(end)
+        localized.append(clone)
+    return localized
+
+
 def run_pipeline(
-    filepath: str, config: Optional[PipelineConfig] = None, run_id: Optional[str] = None
+    filepath: str,
+    config: Optional[PipelineConfig] = None,
+    run_id: Optional[str] = None,
+    tenant_id: str = "default",
 ) -> PipelineRunResult:
     cfg = config or PipelineConfig.from_env()
     started = time.perf_counter()
@@ -163,6 +224,7 @@ def run_pipeline(
     if not log_path.exists():
         result = PipelineRunResult(
             run_id=resolved_run_id,
+            tenant_id=tenant_id,
             status="file_not_found",
             filepath=str(log_path),
             input_sha256="",
@@ -210,6 +272,10 @@ def run_pipeline(
     alerts = build_alerts(cases, run_id=resolved_run_id)
     timings_ms["alert_pipeline"] = int((time.perf_counter() - t_alert_start) * 1000)
 
+    cases = _localize_case_timestamps(cases)
+    campaigns = _localize_campaign_timestamps(campaigns)
+    alerts = _localize_alert_timestamps(alerts)
+
     t_report_start = time.perf_counter()
     report_path = write_markdown_report(cases, campaigns=campaigns, out_dir=cfg.out_dir)
     cases_path = write_json_cases(cases, out_dir=cfg.out_dir)
@@ -238,6 +304,7 @@ def run_pipeline(
 
     result = PipelineRunResult(
         run_id=resolved_run_id,
+        tenant_id=tenant_id,
         status="completed",
         filepath=str(log_path),
         input_sha256=input_hash,
@@ -254,7 +321,8 @@ def run_pipeline(
     )
 
     metadata_payload = result.to_dict()
-    metadata_payload["generated_utc"] = datetime.now(timezone.utc).isoformat()
+    metadata_payload["generated_at"] = now_local_iso()
+    metadata_payload["timezone"] = APP_TIMEZONE_NAME
     metadata_path = write_json_run_metadata(metadata_payload, run_id=resolved_run_id, out_dir=cfg.out_dir)
     result.artifacts["metadata"] = str(metadata_path)
 

@@ -199,6 +199,10 @@ Endpoints:
 5. `GET /pipeline/runs/{run_id}/campaigns`
 6. `GET /pipeline/runs/{run_id}/alerts`
 7. `GET /pipeline/runs/{run_id}/downloads/{artifact_name}`
+8. `POST /auth/keys/create` (admin only)
+9. `GET /auth/keys` (admin only)
+10. `POST /auth/keys/revoke` (admin only)
+11. `GET /auth/status`
 
 Async submit payload example:
 
@@ -208,6 +212,67 @@ Async submit payload example:
   "filename": "customer.log",
   "log_content": "...raw log text..."
 }
+```
+
+### API keys and tenant isolation
+
+Auth can be enabled with:
+
+```env
+SOC_API_AUTH_ENABLED=true
+SOC_ADMIN_TOKEN=your_admin_token
+SOC_API_KEYS_PATH=data/api_keys.json
+SOC_AUDIT_LOG_PATH=logs/api_audit.log
+```
+
+Behavior:
+
+1. When auth is enabled, pipeline endpoints require `Authorization: Bearer <api_key>`.
+2. Each API key belongs to one tenant.
+3. Run metadata/status/artifacts can only be accessed by API keys from the same tenant.
+4. API calls are audit-logged to `logs/api_audit.log` as append-only JSON lines.
+
+Create a tenant key (admin token required):
+
+```bash
+curl -X POST http://127.0.0.1:8000/auth/keys/create \
+  -H "x-admin-token: your_admin_token" \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id":"acme","label":"acme-prod"}'
+```
+
+Use returned `api_key` with pipeline calls:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/pipeline/submit" \
+  -H "Authorization: Bearer <api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id":"acme","filename":"customer.log","log_content":"..."}'
+```
+
+### Client examples (`client/`)
+
+Use the local client script to submit, poll, and download artifacts.
+
+Without API auth:
+
+```bash
+python client/smb_client.py \
+  --base-url http://127.0.0.1:8000 \
+  --tenant-id acme \
+  --file client/example_2.log \
+  --out-dir client/client_downloads
+```
+
+With API auth enabled:
+
+```bash
+python client/smb_client.py \
+  --base-url http://127.0.0.1:8000 \
+  --tenant-id acme \
+  --api-key <api_key> \
+  --file client/example_2.log \
+  --out-dir client/client_downloads
 ```
 
 ## Outputs
@@ -223,6 +288,11 @@ Artifacts written per run:
 7. `reports/run_status_<run_id>.json` (async jobs)
 
 Uploaded async logs are saved under `uploads/<tenant_id>/`.
+
+Security artifacts:
+
+1. API key store: `data/api_keys.json` (hashed keys, metadata only)
+2. API audit log: `logs/api_audit.log` (JSON lines)
 
 ## Testing and Quality
 

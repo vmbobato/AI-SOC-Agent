@@ -1,10 +1,10 @@
 from pathlib import Path
-from datetime import datetime, timezone
 import json
 from typing import Any, Dict, List
+from utils.timezone import now_local_iso, local_tag
 	
 def _now_tag() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_utc")
+    return local_tag()
 
 
 def _render_mapping(lines: List[str], mapping: Dict[str, Any], prefix: str = "- ") -> None:
@@ -94,7 +94,7 @@ def write_markdown_report(cases, campaigns=None, out_dir="reports") -> Path:
     lines = []
     lines.append("# AI SOC Incident Report (MVP)")
     lines.append("")
-    lines.append(f"- Generated (UTC): {datetime.now(timezone.utc).isoformat()}")
+    lines.append(f"- Generated (America/Chicago): {now_local_iso()}")
     lines.append(f"- Cases detected: {len(cases)}")
     campaign_count = len(campaigns or [])
     lines.append(f"- Campaigns correlated: {campaign_count}")

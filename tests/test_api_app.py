@@ -8,22 +8,28 @@ from tempfile import TemporaryDirectory
 from typing import Any, cast
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from starlette.requests import Request
 
 from api.app import SubmitLogPayload, create_app
 
 
-def _request(path: str = "/") -> Request:
+def _request(
+    path: str = "/",
+    *,
+    method: str = "GET",
+    headers: list[tuple[bytes, bytes]] | None = None,
+) -> Request:
     return Request(
         {
             "type": "http",
             "http_version": "1.1",
-            "method": "GET",
+            "method": method,
             "scheme": "http",
             "path": path,
             "root_path": "",
             "query_string": b"",
-            "headers": [],
+            "headers": headers or [],
             "client": ("testclient", 50000),
             "server": ("testserver", 80),
         }
@@ -47,13 +53,13 @@ class ApiAppTests(unittest.TestCase):
         self.assertEqual(response_payload["run_id"], "run-1")
         self.assertIn("links", response_payload)
         self.assertIn("download_links", response_payload)
-        mock_run_pipeline.assert_called_once_with("data/sample.log")
+        mock_run_pipeline.assert_called_once_with("data/sample.log", tenant_id="default")
 
     def test_health_returns_ok(self) -> None:
         app = create_app()
         health_route = next(route for route in app.routes if getattr(route, "path", "") == "/health")
         health_route = cast(Any, health_route)
-        response_payload = health_route.endpoint()
+        response_payload = health_route.endpoint(request=_request("/health"))
         self.assertEqual(response_payload, {"status": "ok"})
 
     def test_pipeline_run_returns_download_link_payload(self) -> None:
@@ -90,7 +96,12 @@ class ApiAppTests(unittest.TestCase):
                     if getattr(route, "path", "") == "/pipeline/runs/{run_id}/downloads/{artifact_name}"
                 )
                 download_route = cast(Any, download_route)
-                file_response = download_route.endpoint(run_id=run_id, artifact_name="cases", inline=False)
+                file_response = download_route.endpoint(
+                    run_id=run_id,
+                    artifact_name="cases",
+                    request=_request(f"/pipeline/runs/{run_id}/downloads/cases"),
+                    inline=False,
+                )
                 self.assertTrue(Path(file_response.path).exists())
                 self.assertIn("attachment", file_response.headers.get("content-disposition", ""))
 
@@ -149,9 +160,33 @@ class ApiAppTests(unittest.TestCase):
                 self.assertIn("download_links", latest_status)
                 self.assertIn("cases", latest_status["download_links"])
 
-                file_response = download_route.endpoint(run_id=run_id, artifact_name="cases", inline=False)
+                file_response = download_route.endpoint(
+                    run_id=run_id,
+                    artifact_name="cases",
+                    request=_request(f"/pipeline/runs/{run_id}/downloads/cases"),
+                    inline=False,
+                )
                 self.assertTrue(Path(file_response.path).exists())
                 self.assertIn("attachment", file_response.headers.get("content-disposition", ""))
+
+    def test_auth_enabled_requires_bearer_for_pipeline_endpoints(self) -> None:
+        fixture_path = Path("tests/fixtures/sample_pipeline.log").resolve()
+        with TemporaryDirectory() as tmp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "SOC_REPORTS_DIR": tmp_dir,
+                    "SOC_API_AUTH_ENABLED": "true",
+                },
+                clear=False,
+            ):
+                app = create_app()
+                run_route = next(
+                    route for route in app.routes if getattr(route, "path", "") == "/pipeline/run"
+                )
+                run_route = cast(Any, run_route)
+                with self.assertRaises(HTTPException):
+                    run_route.endpoint(filepath=str(fixture_path), request=_request("/pipeline/run"))
 
 
 if __name__ == "__main__":

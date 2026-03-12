@@ -126,6 +126,7 @@ class AlertRecord:
 @dataclass(slots=True)
 class PipelineRunResult:
     run_id: str
+    tenant_id: str
     status: str
     filepath: str
     input_sha256: str
@@ -138,6 +139,7 @@ class PipelineRunResult:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "tenant_id": self.tenant_id,
             "status": self.status,
             "filepath": self.filepath,
             "input_sha256": self.input_sha256,
