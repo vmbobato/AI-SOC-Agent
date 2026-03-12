@@ -11,7 +11,10 @@ from alert_pipeline.alerts import build_alerts
 from config.settings import PipelineConfig
 from correlation.campaigns import build_attack_campaigns
 from detections.engine import run_detections
+from ingest.compat import source_context_from_section
+from ingest.intake_models import IntakeRequest
 from ingest.log_reader import iter_log_lines
+from ingest.router import build_router
 from llm.analysis_context import (
     build_case_analysis_context,
     build_control_effectiveness,
@@ -19,10 +22,8 @@ from llm.analysis_context import (
     extract_case_iocs,
 )
 from llm.incident_analyzer import analyze_cases_with_ollama, analyze_cases_with_openai
-from models.schemas import CampaignRecord, CaseRecord, EventRecord, PipelineRunResult
-from parsers.eb_log_parser import parse_eb_engine_line, parse_eb_hooks_line
-from parsers.nginx_parser import parse_nginx_access_line, parse_nginx_error_line
-from parsers.web_stdout_parser import parse_web_stdout_line
+from models.schemas import CampaignRecord, CaseRecord, PipelineRunResult
+from normalize.mappers import normalize_to_canonical
 from reports.llm_report_writer import write_llm_summary
 from reports.report_writer import (
     write_json_alerts,
@@ -37,24 +38,6 @@ from utils.timezone import APP_TIMEZONE_NAME, iso_to_local, local_tag_precise, n
 
 ParserFn = Callable[[str], Optional[Dict[str, Any]]]
 
-PARSERS: Dict[str, ParserFn] = {
-    "/var/log/nginx/access.log": parse_nginx_access_line,
-    "/var/log/nginx/error.log": parse_nginx_error_line,
-    "/var/log/web.stdout.log": parse_web_stdout_line,
-    "/var/log/eb-engine.log": parse_eb_engine_line,
-    "/var/log/eb-hooks.log": parse_eb_hooks_line,
-}
-
-
-def parse_generic_line(line: str, source: str) -> Dict[str, Any]:
-    return {
-        "timestamp": None,
-        "source": source,
-        "severity": "unknown",
-        "message": line.strip(),
-        "raw_line": line,
-    }
-
 
 def _now_run_id() -> str:
     return local_tag_precise()
@@ -65,43 +48,90 @@ def _sha256(path: Path) -> str:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def _parse_events(log_path: Path) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, int]], List[str]]:
+def _metadata_path_for_run(run_id: str, out_dir: str) -> Path:
+    return Path(out_dir) / f"run_metadata_{run_id}.json"
+
+
+def _parse_events(log_path: Path, tenant_id: str) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, int]], List[str]]:
     events: List[Dict[str, Any]] = []
     parsed_ok: Counter[str] = Counter()
     parsed_fail: Counter[str] = Counter()
-    parser_header: Optional[str] = None
     errors: List[str] = []
+
+    router = build_router()
+    current_parser_hint: Optional[str] = None
+    current_source: Dict[str, Any] = {
+        "vendor": "unknown",
+        "product": "unknown",
+        "service": "unknown",
+        "type": "unknown",
+        "format": "raw",
+    }
 
     for line in iter_log_lines(log_path):
         if not line or line.startswith("----"):
             continue
 
-        if line in PARSERS:
-            parser_header = line
+        context = source_context_from_section(line)
+        if context.get("parser_hint") is not None:
+            current_parser_hint = context.get("parser_hint")
+            current_source = dict(context.get("source") or current_source)
             continue
 
-        parser = PARSERS.get(parser_header) if parser_header else None
-        event = parser(line) if parser else None
-        if event:
-            parsed_ok[parser_header or "unknown"] += 1
-            typed = EventRecord.from_dict(event)
-            if typed:
-                events.append(typed.to_dict())
-            else:
-                errors.append("dropped_invalid_event_schema")
-            continue
+        routed = router.route(line, parser_hint=current_parser_hint, context={"source": current_source})
+        canonical = normalize_to_canonical(
+            tenant_id=tenant_id,
+            source=current_source,
+            raw_message=line,
+            raw_timestamp=None,
+            raw_attributes={},
+            parse_result=routed.result,
+        )
+        events.append(canonical.to_dict())
+        if routed.result.success:
+            parsed_ok[routed.result.parser_name] += 1
+        else:
+            parsed_fail[routed.result.parser_name] += 1
+            if routed.result.error:
+                errors.append(routed.result.error)
 
-        parsed_fail[parser_header or "unknown"] += 1
-        if parser_header:
-            fallback = parse_generic_line(line, parser_header)
-            typed = EventRecord.from_dict(fallback)
-            if typed:
-                events.append(typed.to_dict())
+    parse_stats = {"parsed_ok": dict(parsed_ok), "parsed_fail": dict(parsed_fail)}
+    return events, parse_stats, errors
 
-    parse_stats = {
-        "parsed_ok": dict(parsed_ok),
-        "parsed_fail": dict(parsed_fail),
-    }
+
+def _canonical_events_from_intake(
+    intake_request: IntakeRequest, tenant_id: str
+) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, int]], List[str]]:
+    router = build_router()
+    events: List[Dict[str, Any]] = []
+    parsed_ok: Counter[str] = Counter()
+    parsed_fail: Counter[str] = Counter()
+    errors: List[str] = []
+    source = intake_request.source.model_dump(exclude_none=True)
+
+    for intake_event in intake_request.iter_events():
+        routed = router.route(
+            intake_event.message,
+            parser_hint=intake_request.parser_hint,
+            context={"source": source},
+        )
+        canonical = normalize_to_canonical(
+            tenant_id=tenant_id,
+            source=source,
+            raw_message=intake_event.message,
+            raw_timestamp=intake_event.timestamp,
+            raw_attributes=intake_event.attributes,
+            parse_result=routed.result,
+        )
+        events.append(canonical.to_dict())
+        if routed.result.success:
+            parsed_ok[routed.result.parser_name] += 1
+        else:
+            parsed_fail[routed.result.parser_name] += 1
+            if routed.result.error:
+                errors.append(routed.result.error)
+
+    parse_stats = {"parsed_ok": dict(parsed_ok), "parsed_fail": dict(parsed_fail)}
     return events, parse_stats, errors
 
 
@@ -222,6 +252,7 @@ def run_pipeline(
     errors: List[str] = []
 
     if not log_path.exists():
+        metadata_path = _metadata_path_for_run(resolved_run_id, cfg.out_dir)
         result = PipelineRunResult(
             run_id=resolved_run_id,
             tenant_id=tenant_id,
@@ -230,16 +261,15 @@ def run_pipeline(
             input_sha256="",
             counts={"events": 0, "cases": 0, "campaigns": 0, "alerts": 0},
             parse_stats={"parsed_ok": {}, "parsed_fail": {}},
-            artifacts={},
+            artifacts={"metadata": str(metadata_path)},
             timings_ms={"total": int((time.perf_counter() - started) * 1000)},
             errors=["file_not_found"],
         )
-        metadata_path = write_json_run_metadata(result.to_dict(), run_id=resolved_run_id, out_dir=cfg.out_dir)
-        result.artifacts["metadata"] = str(metadata_path)
+        write_json_run_metadata(result.to_dict(), run_id=resolved_run_id, out_dir=cfg.out_dir)
         return result
 
     t_parse_start = time.perf_counter()
-    events, parse_stats, parse_errors = _parse_events(log_path)
+    events, parse_stats, parse_errors = _parse_events(log_path, tenant_id=tenant_id)
     timings_ms: Dict[str, int] = {
         "parse": int((time.perf_counter() - t_parse_start) * 1000),
     }
@@ -301,6 +331,8 @@ def run_pipeline(
     }
     if llm_path:
         artifacts["llm_summary"] = str(llm_path)
+    metadata_path = _metadata_path_for_run(resolved_run_id, cfg.out_dir)
+    artifacts["metadata"] = str(metadata_path)
 
     result = PipelineRunResult(
         run_id=resolved_run_id,
@@ -323,9 +355,105 @@ def run_pipeline(
     metadata_payload = result.to_dict()
     metadata_payload["generated_at"] = now_local_iso()
     metadata_payload["timezone"] = APP_TIMEZONE_NAME
-    metadata_path = write_json_run_metadata(metadata_payload, run_id=resolved_run_id, out_dir=cfg.out_dir)
-    result.artifacts["metadata"] = str(metadata_path)
+    write_json_run_metadata(metadata_payload, run_id=resolved_run_id, out_dir=cfg.out_dir)
 
+    return result
+
+
+def run_pipeline_from_intake(
+    intake_request: IntakeRequest,
+    config: Optional[PipelineConfig] = None,
+    run_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+) -> PipelineRunResult:
+    cfg = config or PipelineConfig.from_env()
+    started = time.perf_counter()
+    resolved_run_id = run_id or _now_run_id()
+    resolved_tenant_id = tenant_id or intake_request.tenant_id
+
+    events, parse_stats, parse_errors = _canonical_events_from_intake(
+        intake_request=intake_request,
+        tenant_id=resolved_tenant_id,
+    )
+    timings_ms: Dict[str, int] = {"parse": int((time.perf_counter() - started) * 1000)}
+    errors: List[str] = list(parse_errors)
+
+    raw_fingerprint = "\n".join(event.message for event in intake_request.iter_events())
+    input_hash = hashlib.sha256(raw_fingerprint.encode("utf-8")).hexdigest()
+
+    t_detect_start = time.perf_counter()
+    cases = run_detections(
+        events,
+        scan_unique_paths_threshold=cfg.detection.scan_unique_paths_threshold,
+        scan_404_ratio_threshold=cfg.detection.scan_404_ratio_threshold,
+        brute_force_threshold=cfg.detection.brute_force_threshold,
+        dos_rpm_threshold=cfg.detection.dos_rpm_threshold,
+        window_minutes=cfg.detection.window_minutes,
+    )
+    timings_ms["detect"] = int((time.perf_counter() - t_detect_start) * 1000)
+
+    t_enrich_start = time.perf_counter()
+    cases = enrich_cases_with_threat_intel(cases)
+    cases = _augment_cases(cases)
+    timings_ms["enrich_and_augment"] = int((time.perf_counter() - t_enrich_start) * 1000)
+
+    t_campaign_start = time.perf_counter()
+    campaigns = build_attack_campaigns(cases, correlation_window_minutes=cfg.detection.correlation_window_minutes)
+    campaigns = _validate_campaigns(campaigns)
+    timings_ms["campaign_correlation"] = int((time.perf_counter() - t_campaign_start) * 1000)
+
+    t_alert_start = time.perf_counter()
+    alerts = build_alerts(cases, run_id=resolved_run_id)
+    timings_ms["alert_pipeline"] = int((time.perf_counter() - t_alert_start) * 1000)
+
+    cases = _localize_case_timestamps(cases)
+    campaigns = _localize_campaign_timestamps(campaigns)
+    alerts = _localize_alert_timestamps(alerts)
+
+    t_report_start = time.perf_counter()
+    report_path = write_markdown_report(cases, campaigns=campaigns, out_dir=cfg.out_dir)
+    cases_path = write_json_cases(cases, out_dir=cfg.out_dir)
+    campaigns_path = write_json_campaigns(campaigns, out_dir=cfg.out_dir)
+    alerts_path = write_json_alerts(alerts, out_dir=cfg.out_dir)
+    timings_ms["reporting"] = int((time.perf_counter() - t_report_start) * 1000)
+
+    llm_path = None
+    try:
+        t_llm_start = time.perf_counter()
+        llm_path = _run_llm_summary(cases, campaigns, config=cfg, out_dir=cfg.out_dir)
+        timings_ms["llm"] = int((time.perf_counter() - t_llm_start) * 1000)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"llm_analysis_failed:{exc}")
+
+    timings_ms["total"] = int((time.perf_counter() - started) * 1000)
+    artifacts = {
+        "incident_report": str(report_path),
+        "cases": str(cases_path),
+        "campaigns": str(campaigns_path),
+        "alerts": str(alerts_path),
+    }
+    if llm_path:
+        artifacts["llm_summary"] = str(llm_path)
+    metadata_path = _metadata_path_for_run(resolved_run_id, cfg.out_dir)
+    artifacts["metadata"] = str(metadata_path)
+
+    result = PipelineRunResult(
+        run_id=resolved_run_id,
+        tenant_id=resolved_tenant_id,
+        status="completed",
+        filepath="intake_payload",
+        input_sha256=input_hash,
+        counts={"events": len(events), "cases": len(cases), "campaigns": len(campaigns), "alerts": len(alerts)},
+        parse_stats=parse_stats,
+        artifacts=artifacts,
+        timings_ms=timings_ms,
+        errors=errors,
+    )
+
+    metadata_payload = result.to_dict()
+    metadata_payload["generated_at"] = now_local_iso()
+    metadata_payload["timezone"] = APP_TIMEZONE_NAME
+    write_json_run_metadata(metadata_payload, run_id=resolved_run_id, out_dir=cfg.out_dir)
     return result
 
 

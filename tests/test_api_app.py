@@ -11,7 +11,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from api.app import SubmitLogPayload, create_app
+from api.app import IntakeRunPayload, SubmitLogPayload, create_app
 
 
 def _request(
@@ -168,6 +168,86 @@ class ApiAppTests(unittest.TestCase):
                 )
                 self.assertTrue(Path(file_response.path).exists())
                 self.assertIn("attachment", file_response.headers.get("content-disposition", ""))
+
+    def test_pipeline_intake_endpoint_runs(self) -> None:
+        raw = '84.247.182.240 - - [12/Mar/2026:04:21:11 +0000] "GET /.env HTTP/1.1" 404 153 "-" "curl/8.5.0"'
+        with TemporaryDirectory() as tmp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "SOC_REPORTS_DIR": tmp_dir,
+                    "SOC_UPLOADS_DIR": f"{tmp_dir}/uploads",
+                    "SOC_LLM_ENABLED": "false",
+                },
+                clear=False,
+            ):
+                app = create_app()
+                intake_route = next(
+                    route for route in app.routes if getattr(route, "path", "") == "/pipeline/intake"
+                )
+                intake_route = cast(Any, intake_route)
+                payload = intake_route.endpoint(
+                    payload=IntakeRunPayload.model_validate(
+                        {
+                            "tenant_id": "acme-prod",
+                            "parser_hint": "nginx_access",
+                            "source": {
+                                "vendor": "nginx",
+                                "product": "nginx",
+                                "service": "frontend",
+                                "type": "access",
+                                "format": "combined",
+                                "host": "web-01",
+                                "environment": "prod",
+                            },
+                            "events": [{"message": raw, "timestamp": None, "attributes": {}}],
+                        }
+                    ),
+                    request=_request("/pipeline/intake", method="POST"),
+                )
+                self.assertEqual(payload["status"], "completed")
+                self.assertEqual(payload["tenant_id"], "acme-prod")
+
+    def test_pipeline_intake_endpoint_runs_with_log_content(self) -> None:
+        raw_1 = '84.247.182.240 - - [12/Mar/2026:04:21:11 +0000] "GET /.env HTTP/1.1" 404 153 "-" "curl/8.5.0"'
+        raw_2 = '84.247.182.240 - - [12/Mar/2026:04:21:12 +0000] "GET /.git/config HTTP/1.1" 404 153 "-" "curl/8.5.0"'
+        with TemporaryDirectory() as tmp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "SOC_REPORTS_DIR": tmp_dir,
+                    "SOC_UPLOADS_DIR": f"{tmp_dir}/uploads",
+                    "SOC_LLM_ENABLED": "false",
+                },
+                clear=False,
+            ):
+                app = create_app()
+                intake_route = next(
+                    route for route in app.routes if getattr(route, "path", "") == "/pipeline/intake"
+                )
+                intake_route = cast(Any, intake_route)
+                payload = intake_route.endpoint(
+                    payload=IntakeRunPayload.model_validate(
+                        {
+                            "tenant_id": "acme-prod",
+                            "parser_hint": "nginx_access",
+                            "source": {
+                                "vendor": "nginx",
+                                "product": "nginx",
+                                "service": "frontend",
+                                "type": "access",
+                                "format": "combined",
+                                "host": "web-01",
+                                "environment": "prod",
+                            },
+                            "log_content": f"{raw_1}\n{raw_2}",
+                        }
+                    ),
+                    request=_request("/pipeline/intake", method="POST"),
+                )
+                self.assertEqual(payload["status"], "completed")
+                self.assertEqual(payload["tenant_id"], "acme-prod")
+                self.assertEqual(payload.get("counts", {}).get("events"), 2)
 
     def test_auth_enabled_requires_bearer_for_pipeline_endpoints(self) -> None:
         fixture_path = Path("tests/fixtures/sample_pipeline.log").resolve()

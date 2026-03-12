@@ -17,13 +17,12 @@ AI SOC Agent is a Python SOC pipeline that parses infrastructure logs, detects s
 
 Entry points: `main.py` (CLI) and `api/app.py` (FastAPI control plane).
 
-1. `pipeline/orchestrator.py` parses logs by section header:
-   - `/var/log/nginx/access.log`
-   - `/var/log/nginx/error.log`
-   - `/var/log/web.stdout.log`
-   - `/var/log/eb-engine.log`
-   - `/var/log/eb-hooks.log`
-2. Parsed events run through `run_detections(...)`
+1. Ingestion accepts either:
+   - multi-tenant intake payloads (`POST /pipeline/intake`)
+   - legacy file/section-header logs (`run_pipeline(filepath=...)`) via compatibility mapping
+2. Raw events route through parser hint + auto-detection parser plugins
+3. Parsed results normalize into one canonical event schema
+4. Canonical events run through `run_detections(...)`
 3. Cases are enriched with threat intel
 4. Cases are augmented with deterministic analysis fields
 5. Cases are correlated into campaigns
@@ -194,15 +193,16 @@ Endpoints:
 
 1. `POST /pipeline/run?filepath=/path/to/log` (synchronous)
 2. `POST /pipeline/submit` (asynchronous; JSON payload)
-3. `GET /pipeline/runs/{run_id}` (status + metadata + links)
-4. `GET /pipeline/runs/{run_id}/cases`
-5. `GET /pipeline/runs/{run_id}/campaigns`
-6. `GET /pipeline/runs/{run_id}/alerts`
-7. `GET /pipeline/runs/{run_id}/downloads/{artifact_name}`
-8. `POST /auth/keys/create` (admin only)
-9. `GET /auth/keys` (admin only)
-10. `POST /auth/keys/revoke` (admin only)
-11. `GET /auth/status`
+3. `POST /pipeline/intake` (synchronous, canonical ingestion payload)
+4. `GET /pipeline/runs/{run_id}` (status + metadata + links)
+5. `GET /pipeline/runs/{run_id}/cases`
+6. `GET /pipeline/runs/{run_id}/campaigns`
+7. `GET /pipeline/runs/{run_id}/alerts`
+8. `GET /pipeline/runs/{run_id}/downloads/{artifact_name}`
+9. `POST /auth/keys/create` (admin only)
+10. `GET /auth/keys` (admin only)
+11. `POST /auth/keys/revoke` (admin only)
+12. `GET /auth/status`
 
 Async submit payload example:
 
@@ -211,6 +211,31 @@ Async submit payload example:
   "tenant_id": "acme",
   "filename": "customer.log",
   "log_content": "...raw log text..."
+}
+```
+
+Canonical intake payload example:
+
+```json
+{
+  "tenant_id": "acme-prod",
+  "parser_hint": "nginx_access",
+  "source": {
+    "vendor": "nginx",
+    "product": "nginx",
+    "service": "frontend",
+    "type": "access",
+    "format": "combined",
+    "host": "web-01",
+    "environment": "prod"
+  },
+  "events": [
+    {
+      "message": "84.247.182.240 - - [12/Mar/2026:04:21:11 +0000] \"GET /.env HTTP/1.1\" 404 153 \"-\" \"curl/8.5.0\"",
+      "timestamp": null,
+      "attributes": {}
+    }
+  ]
 }
 ```
 
@@ -311,9 +336,16 @@ mypy .
 
 CI workflow is defined in `.github/workflows/ci.yml`.
 
+## API Documentation
+
+- Full endpoint + onboarding guide (auth setup, API keys, request/response schemas, field definitions, client playbooks, smoke tests): `docs/api_reference.md`
+- Client-facing quickstart (what clients need, exact commands, troubleshooting): `docs/client_quickstart.md`
+
 ## Operational Notes
 
 1. Input logs are read-only; pipeline writes new output artifacts.
 2. TI provider failures do not stop detection/report generation.
 3. LLM failures do not fail the run; they are recorded under `errors` in run metadata.
 4. Detection coverage includes automated tests for all implemented detector types.
+5. Parser routing uses `parser_hint` as first attempt, then auto-detection, then `fallback_raw`.
+6. Canonical ingestion details and plugin extension guide: `docs/ingestion_v2.md`.

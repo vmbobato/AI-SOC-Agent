@@ -4,6 +4,45 @@ import re
 
 def _to_df(events):
     df = pd.DataFrame(events)
+
+    # Canonical -> detector compatibility projection.
+    if "timestamp" not in df.columns and "ts" in df.columns:
+        df["timestamp"] = df["ts"]
+    if "client_ip" not in df.columns and "src_ip" in df.columns:
+        df["client_ip"] = df["src_ip"]
+    if "path" not in df.columns and "url_path" in df.columns:
+        df["path"] = df["url_path"]
+    if "status" not in df.columns and "status_code" in df.columns:
+        df["status"] = df["status_code"]
+    if "method" not in df.columns and "http_method" in df.columns:
+        df["method"] = df["http_method"]
+    if "reason" not in df.columns and "category" in df.columns:
+        df["reason"] = df["category"]
+
+    if "source" not in df.columns:
+        source_values = []
+        for _, row in df.iterrows():
+            parser_name = str(row.get("parser_name") or "")
+            event_family = str(row.get("event_family") or "")
+            source_type = str(row.get("source_type") or "")
+            if parser_name == "nginx_access" or (event_family == "http" and source_type == "access"):
+                source_values.append("nginx_access")
+            elif parser_name == "web_stdout" or event_family == "app":
+                source_values.append("web_stdout")
+            elif parser_name:
+                source_values.append(parser_name)
+            elif event_family:
+                source_values.append(event_family)
+            else:
+                source_values.append("unknown")
+        df["source"] = source_values
+
+    if "timestamp" not in df.columns:
+        if "ts" in df.columns:
+            df["timestamp"] = df["ts"]
+        else:
+            df["timestamp"] = None
+
     df["timestamp"] = df["timestamp"].astype(str).str.strip()
     df["ts"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce", format="mixed")
     df = df.dropna(subset=["ts"])

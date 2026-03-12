@@ -18,6 +18,7 @@ from api.auth import (
     validate_admin_request,
 )
 from config.settings import PipelineConfig
+from ingest.intake_models import IntakeRequest
 from pipeline.jobs import (
     load_run_status,
     new_run_id,
@@ -32,6 +33,7 @@ from pipeline.orchestrator import (
     load_cases_for_run,
     load_run_metadata,
     run_pipeline,
+    run_pipeline_from_intake,
 )
 
 
@@ -49,6 +51,10 @@ class SubmitLogPayload(BaseModel):
     tenant_id: str = "default"
     filename: str = "uploaded.log"
     log_content: str
+
+
+class IntakeRunPayload(IntakeRequest):
+    pass
 
 
 class CreateApiKeyPayload(BaseModel):
@@ -264,6 +270,24 @@ def create_app() -> FastAPI:
             "links": _build_run_links(request, run_id),
         }
         _audit(request, status="queued", status_code=200, tenant_id=resolved_tenant, run_id=run_id)
+        return response
+
+    @app.post("/pipeline/intake")
+    def run_pipeline_from_intake_payload(payload: IntakeRunPayload, request: Request) -> dict:
+        resolved_tenant = _resolve_tenant_id(request, payload.tenant_id)
+        result = run_pipeline_from_intake(
+            intake_request=payload,
+            config=PipelineConfig.from_env(),
+            tenant_id=resolved_tenant,
+        )
+        response = result.to_dict()
+        response["links"] = _build_run_links(request, result.run_id)
+        response["download_links"] = {
+            name: f"{str(request.base_url).rstrip('/')}/pipeline/runs/{result.run_id}/downloads/{name}"
+            for name in (response.get("artifacts") or {}).keys()
+            if name in DOWNLOADABLE_ARTIFACTS
+        }
+        _audit(request, status="success", status_code=200, tenant_id=resolved_tenant, run_id=result.run_id)
         return response
 
     @app.get("/pipeline/runs/{run_id}")
