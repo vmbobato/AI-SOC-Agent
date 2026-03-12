@@ -48,6 +48,14 @@ def _sha256(path: Path) -> str:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
+def _app_version() -> str:
+    version_file = Path(__file__).resolve().parents[1] / "VERSION"
+    try:
+        return version_file.read_text(encoding="utf-8").strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
 def _metadata_path_for_run(run_id: str, out_dir: str) -> Path:
     return Path(out_dir) / f"run_metadata_{run_id}.json"
 
@@ -265,7 +273,12 @@ def run_pipeline(
             timings_ms={"total": int((time.perf_counter() - started) * 1000)},
             errors=["file_not_found"],
         )
-        write_json_run_metadata(result.to_dict(), run_id=resolved_run_id, out_dir=cfg.out_dir)
+        missing_payload = result.to_dict()
+        missing_payload["service"] = "AI-SOC-Agent"
+        missing_payload["version"] = _app_version()
+        missing_payload["generated_at"] = now_local_iso()
+        missing_payload["timezone"] = APP_TIMEZONE_NAME
+        write_json_run_metadata(missing_payload, run_id=resolved_run_id, out_dir=cfg.out_dir)
         return result
 
     t_parse_start = time.perf_counter()
@@ -353,6 +366,8 @@ def run_pipeline(
     )
 
     metadata_payload = result.to_dict()
+    metadata_payload["service"] = "AI-SOC-Agent"
+    metadata_payload["version"] = _app_version()
     metadata_payload["generated_at"] = now_local_iso()
     metadata_payload["timezone"] = APP_TIMEZONE_NAME
     write_json_run_metadata(metadata_payload, run_id=resolved_run_id, out_dir=cfg.out_dir)
@@ -451,6 +466,8 @@ def run_pipeline_from_intake(
     )
 
     metadata_payload = result.to_dict()
+    metadata_payload["service"] = "AI-SOC-Agent"
+    metadata_payload["version"] = _app_version()
     metadata_payload["generated_at"] = now_local_iso()
     metadata_payload["timezone"] = APP_TIMEZONE_NAME
     write_json_run_metadata(metadata_payload, run_id=resolved_run_id, out_dir=cfg.out_dir)

@@ -60,7 +60,10 @@ class ApiAppTests(unittest.TestCase):
         health_route = next(route for route in app.routes if getattr(route, "path", "") == "/health")
         health_route = cast(Any, health_route)
         response_payload = health_route.endpoint(request=_request("/health"))
-        self.assertEqual(response_payload, {"status": "ok"})
+        self.assertEqual(
+            response_payload,
+            {"service": "AI-SOC-Agent", "version": "0.3.0", "status": "ok"},
+        )
 
     def test_pipeline_run_returns_download_link_payload(self) -> None:
         fixture_path = Path("tests/fixtures/sample_pipeline.log").resolve()

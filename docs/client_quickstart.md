@@ -21,6 +21,16 @@ curl "$API_BASE_URL/health"
 curl "$API_BASE_URL/auth/status"
 ```
 
+Expected `/health` response example:
+
+```json
+{
+  "service": "AI-SOC-Agent",
+  "version": "0.3.0",
+  "status": "ok"
+}
+```
+
 If auth is enabled, all pipeline calls require:
 
 ```http

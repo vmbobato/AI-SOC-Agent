@@ -145,6 +145,8 @@ Response:
 
 ```json
 {
+  "service": "AI-SOC-Agent",
+  "version": "0.3.0",
   "status": "ok"
 }
 ```
@@ -437,6 +439,8 @@ Response shape for sync runs (`/pipeline/run` and `/pipeline/intake`):
 {
   "run_id": "string",
   "tenant_id": "string",
+  "service": "AI-SOC-Agent",
+  "version": "0.3.0",
   "status": "completed|file_not_found",
   "filepath": "string",
   "input_sha256": "string",

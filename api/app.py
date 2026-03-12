@@ -46,6 +46,12 @@ DOWNLOADABLE_ARTIFACTS = {
     "metadata",
 }
 
+_VERSION_FILE = Path(__file__).resolve().parents[1] / "VERSION"
+try:
+    APP_VERSION = _VERSION_FILE.read_text(encoding="utf-8").strip() or "unknown"
+except OSError:
+    APP_VERSION = "unknown"
+
 
 class SubmitLogPayload(BaseModel):
     tenant_id: str = "default"
@@ -175,10 +181,20 @@ def create_app() -> FastAPI:
     """Build and return the FastAPI application instance."""
     app = FastAPI(title="AI SOC Analyst API", version="0.4.0")
 
+    @app.middleware("http")
+    async def add_api_version_header(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        response.headers["X-API-Version"] = APP_VERSION
+        return response
+
     @app.get("/health")
     def health(request: Request) -> dict[str, str]:
         _audit(request, status="success", status_code=200)
-        return {"status": "ok"}
+        return {
+            "service": "AI-SOC-Agent",
+            "version": APP_VERSION,
+            "status": "ok",
+        }
 
     @app.post("/auth/keys/create")
     def create_key(payload: CreateApiKeyPayload, request: Request) -> dict:

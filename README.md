@@ -23,12 +23,12 @@ Entry points: `main.py` (CLI) and `api/app.py` (FastAPI control plane).
 2. Raw events route through parser hint + auto-detection parser plugins
 3. Parsed results normalize into one canonical event schema
 4. Canonical events run through `run_detections(...)`
-3. Cases are enriched with threat intel
-4. Cases are augmented with deterministic analysis fields
-5. Cases are correlated into campaigns
-6. Alerts are generated
-7. Reports and metadata are persisted
-8. LLM summary is generated when enabled and cases exist
+5. Cases are enriched with threat intel
+6. Cases are augmented with deterministic analysis fields
+7. Cases are correlated into campaigns
+8. Alerts are generated
+9. Reports and metadata are persisted
+10. LLM summary is generated when enabled and cases exist
 
 ## Detection Coverage
 

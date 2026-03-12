@@ -2,6 +2,13 @@ from pathlib import Path
 import json
 from typing import Any, Dict, List
 from utils.timezone import now_local_iso, local_tag
+
+_VERSION_FILE = Path(__file__).resolve().parents[1] / "VERSION"
+try:
+    _APP_VERSION = _VERSION_FILE.read_text(encoding="utf-8").strip() or "unknown"
+except OSError:
+    _APP_VERSION = "unknown"
+_APP_SERVICE = "AI-SOC-Agent"
 	
 def _now_tag() -> str:
     return local_tag()
@@ -94,6 +101,8 @@ def write_markdown_report(cases, campaigns=None, out_dir="reports") -> Path:
     lines = []
     lines.append("# AI SOC Incident Report (MVP)")
     lines.append("")
+    lines.append(f"- Service: {_APP_SERVICE}")
+    lines.append(f"- Version: {_APP_VERSION}")
     lines.append(f"- Generated (America/Chicago): {now_local_iso()}")
     lines.append(f"- Cases detected: {len(cases)}")
     campaign_count = len(campaigns or [])
