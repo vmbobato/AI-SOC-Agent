@@ -1,44 +1,35 @@
 # AI SOC Agent
 
-AI SOC Agent is a local SOC analysis pipeline that:
-
-1. Parses infrastructure and application logs
-2. Detects suspicious behavior
-3. Builds structured incident cases
-4. Enriches attacker IPs with threat intelligence
-5. Generates markdown/JSON reports
-6. Produces an LLM SOC analyst summary
+AI SOC Agent is a Python SOC pipeline that parses infrastructure logs, detects suspicious activity, correlates incidents into campaigns, generates alerts, enriches IPs with threat intel, and produces analyst-ready reports with optional LLM summaries.
 
 ## Current Architecture
-
-This repository currently runs as a local CLI workflow (no AWS module in the current tree).
 
 ### Pipeline layers
 
 1. `ingestion`: reads log files line-by-line (`ingest/log_reader.py`)
-2. `detection_engine`: builds cases from parsed events (`detections/engine.py`)
+2. `detection_engine`: builds incident cases from parsed events (`detections/engine.py`)
 3. `threat_intel`: enriches case source IPs (`threat_intel/enrich.py`)
-4. `llm_analysis`: summarizes cases with Ollama/OpenAI (`llm/incident_analyzer.py`)
+4. `llm_analysis`: generates SOC summaries with OpenAI/Ollama (`llm/incident_analyzer.py`)
 5. `alert_pipeline`: creates normalized, deduplicated alerts (`alert_pipeline/alerts.py`)
-6. `reporting`: writes markdown + JSON + run metadata files (`reports/*`)
+6. `reporting`: writes markdown/JSON artifacts and run metadata (`reports/*`)
 
-### Main execution flow
+### Execution flow
 
 Entry points: `main.py` (CLI) and `api/app.py` (FastAPI control plane).
 
-1. `pipeline/orchestrator.py` reads and parses a log file by section headers
-2. The parser context switches based on section headers like:
+1. `pipeline/orchestrator.py` parses logs by section header:
    - `/var/log/nginx/access.log`
    - `/var/log/nginx/error.log`
    - `/var/log/web.stdout.log`
    - `/var/log/eb-engine.log`
    - `/var/log/eb-hooks.log`
-3. Parsed events are sent to `run_detections(...)`
-4. Cases are enriched with threat intel via `enrich_cases_with_threat_intel(...)`
+2. Parsed events run through `run_detections(...)`
+3. Cases are enriched with threat intel
+4. Cases are augmented with deterministic analysis fields
 5. Cases are correlated into campaigns
-6. Alerts are generated via `build_alerts(...)`
-7. Reports and metadata are written to `reports/`
-8. If enabled (`SOC_LLM_ENABLED=true`), an LLM summary is generated and saved
+6. Alerts are generated
+7. Reports and metadata are persisted
+8. LLM summary is generated when enabled and cases exist
 
 ## Detection Coverage
 
@@ -50,47 +41,50 @@ Implemented detections:
 4. Brute Force Attempt
 5. Traffic Burst / Possible DoS
 
-## Threat Intelligence Enrichment
+## Threat Intelligence
 
-Threat intel is attached per case under `case["threat_intel"]`.
+Per-case enrichment is attached under `case["threat_intel"]`.
 
-### Providers
+Providers:
 
-1. IPinfo (geo/org/asn context)
-2. AbuseIPDB (abuse score/report count context)
+1. IPinfo (country/city/asn/org)
+2. AbuseIPDB (abuse confidence/reports)
 
-### Safe IP handling
+Safe-IP handling:
 
-IPs are classified before enrichment. The pipeline skips:
-
-1. Private IPs
+1. Private
 2. Loopback
 3. Link-local
 4. Reserved/multicast/unspecified
-5. Invalid IP strings
+5. Invalid IPs
 
-Skipped values are marked with `intel_status` (for example: `skipped_private_ip`).
-
-### Behavior when keys are missing
-
-If provider keys are not configured, pipeline execution continues and marks public IP enrichment as `skipped_no_api_keys`.
+When API keys are missing, public IPs are marked `skipped_no_api_keys` and pipeline execution continues.
 
 ## LLM Summary Layer
 
-LLM analysis runs through Ollama using:
+Supported providers:
 
-1. URL: `http://localhost:11434/api/generate`
-2. Model default in code: `llama3`
+1. OpenAI (default)
+2. Ollama
 
-Before prompt generation, cases are compacted with `compact_cases_for_llm(...)` to include normalized intel fields without noisy raw payloads.
+Defaults from config:
+
+1. `SOC_LLM_ENABLED=true`
+2. `SOC_LLM_PROVIDER=openai`
+3. `SOC_LLM_MODEL=gpt-4.1`
+
+For Ollama, default endpoint is `http://localhost:11434/api/generate`.
 
 ## Project Structure
 
 ```text
 .
 ├── main.py
+├── api/
+│   └── app.py
 ├── pipeline/
-│   └── orchestrator.py
+│   ├── orchestrator.py
+│   └── jobs.py
 ├── config/
 │   └── settings.py
 ├── models/
@@ -98,36 +92,28 @@ Before prompt generation, cases are compacted with `compact_cases_for_llm(...)` 
 ├── alert_pipeline/
 │   └── alerts.py
 ├── ingest/
-│   └── log_reader.py
 ├── parsers/
-│   ├── nginx_parser.py
-│   ├── web_stdout_parser.py
-│   └── eb_log_parser.py
 ├── detections/
-│   └── engine.py
+├── correlation/
 ├── threat_intel/
-│   ├── __init__.py
-│   └── enrich.py
 ├── llm/
-│   └── incident_analyzer.py
 ├── reports/
-│   ├── report_writer.py
-│   └── llm_report_writer.py
-├── api/
-│   └── app.py
+├── tests/
 ├── data/
-├── saved_states/
 └── requirements.txt
 ```
 
 ## Requirements
 
-`requirements.txt` is version pinned:
+Pinned dependencies in `requirements.txt`:
 
 1. `pandas==3.0.1`
 2. `numpy==2.4.2`
 3. `requests==2.32.5`
 4. `python-dotenv==1.0.1`
+5. `fastapi==0.116.1`
+6. `uvicorn==0.35.0`
+7. `openai==2.8.0`
 
 ## Setup
 
@@ -151,53 +137,54 @@ Windows PowerShell:
 .\.soc_agent\Scripts\Activate.ps1
 ```
 
-3. Install deps:
+3. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-4. (Optional) configure `.env` in repo root for threat intel:
+4. Configure `.env` (recommended):
 
 ```env
+# Threat intel
 AUTH_BEARER_IP_INFO=your_ipinfo_token
 ABUSEIPDB_API_KEY=your_abuseipdb_api_key
+
+# LLM defaults
+SOC_LLM_ENABLED=true
+SOC_LLM_PROVIDER=openai
+SOC_LLM_MODEL=gpt-4.1
+OPENAI_API_KEY=your_openai_key
+
+# Optional directories
+SOC_REPORTS_DIR=reports
+SOC_UPLOADS_DIR=uploads
 ```
 
-Notes:
+For Ollama instead of OpenAI:
 
-1. `threat_intel/enrich.py` calls `load_dotenv()`, so `.env` is auto-loaded.
-2. Current code reads `AUTH_BEARER_IP_INFO` for IPinfo auth token.
-
-5. Start Ollama (optional but needed for LLM summary):
-
-```bash
-ollama serve
-ollama pull llama3
+```env
+SOC_LLM_PROVIDER=ollama
+SOC_LLM_MODEL=llama3
 ```
 
 ## Running the Project
 
-### Interactive mode
+### CLI mode
 
 ```bash
 python main.py
 ```
 
-Available commands:
+Commands:
 
-1. `run` -> executes full pipeline on the default sample file
-2. `exit` -> exits and saves state JSON into `saved_states/`
+1. `run` -> runs pipeline on default sample file
+2. `run <path>` -> runs pipeline on a custom log file
+3. `exit` -> exits and saves session state
 
-### Run against a custom file path
+### API mode
 
-```bash
-python -c "import main; main.run('path/to/your_log_file.log')"
-```
-
-### API mode (control plane)
-
-Run with Uvicorn:
+Start server:
 
 ```bash
 uvicorn api.app:app --reload
@@ -205,60 +192,58 @@ uvicorn api.app:app --reload
 
 Endpoints:
 
-1. `POST /pipeline/run?filepath=/path/to/log` (synchronous run)
-2. `POST /pipeline/submit` (async run from log content payload)
+1. `POST /pipeline/run?filepath=/path/to/log` (synchronous)
+2. `POST /pipeline/submit` (asynchronous; JSON payload)
 3. `GET /pipeline/runs/{run_id}` (status + metadata + links)
 4. `GET /pipeline/runs/{run_id}/cases`
 5. `GET /pipeline/runs/{run_id}/campaigns`
 6. `GET /pipeline/runs/{run_id}/alerts`
-7. `GET /pipeline/runs/{run_id}/downloads/{artifact_name}` (`cases`, `campaigns`, `alerts`, `incident_report`, `llm_summary`, `metadata`)
+7. `GET /pipeline/runs/{run_id}/downloads/{artifact_name}`
 
-## Outputs
-
-Generated artifacts:
-
-1. Incident markdown report: `reports/incident_report_<timestamp>.md`
-2. Cases JSON: `reports/cases_<timestamp>.json`
-3. Campaigns JSON: `reports/campaigns_<timestamp>.json`
-4. Alerts JSON: `reports/alerts_<timestamp>.json`
-5. Run metadata JSON: `reports/run_metadata_<run_id>.json`
-6. LLM markdown summary (if enabled and cases exist): `reports/llm_summary_<timestamp>.md`
-7. Session state on exit: `saved_states/<timestamp>_Saved-State.json`
-
-## Case Schema (simplified)
-
-Each case includes:
-
-1. `incident_type`
-2. `timestamp_start`, `timestamp_end`
-3. `source_ips`
-4. `evidence`
-5. `severity`, `confidence`
-6. `recommended_actions`
-7. `threat_intel` (added during enrichment)
-
-Example threat intel block:
+Async submit payload example:
 
 ```json
 {
-  "threat_intel": {
-    "84.247.182.240": {
-      "intel_status": "enriched",
-      "country": "NL",
-      "city": "Amsterdam",
-      "asn": "AS12345",
-      "org": "Example ISP",
-      "is_hosting_provider": true,
-      "abuse_confidence_score": 67,
-      "abuse_reports": 24,
-      "source": ["ipinfo", "abuseipdb"]
-    }
-  }
+  "tenant_id": "acme",
+  "filename": "customer.log",
+  "log_content": "...raw log text..."
 }
 ```
 
+## Outputs
+
+Artifacts written per run:
+
+1. `reports/incident_report_<timestamp>.md`
+2. `reports/cases_<timestamp>.json`
+3. `reports/campaigns_<timestamp>.json`
+4. `reports/alerts_<timestamp>.json`
+5. `reports/run_metadata_<run_id>.json`
+6. `reports/llm_summary_<timestamp>.md` (if generated)
+7. `reports/run_status_<run_id>.json` (async jobs)
+
+Uploaded async logs are saved under `uploads/<tenant_id>/`.
+
+## Testing and Quality
+
+Run tests:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Static checks:
+
+```bash
+ruff check .
+mypy .
+```
+
+CI workflow is defined in `.github/workflows/ci.yml`.
+
 ## Operational Notes
 
-1. If external TI providers are unreachable, enrichment fails gracefully and detection/reporting still complete.
-2. Logs are consumed as input only; outputs are written as new files.
-3. This repo currently does not include automated detection tests yet; adding tests for each detector is recommended as the next hardening step.
+1. Input logs are read-only; pipeline writes new output artifacts.
+2. TI provider failures do not stop detection/report generation.
+3. LLM failures do not fail the run; they are recorded under `errors` in run metadata.
+4. Detection coverage includes automated tests for all implemented detector types.
