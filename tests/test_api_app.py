@@ -59,10 +59,11 @@ class ApiAppTests(unittest.TestCase):
         app = create_app()
         health_route = next(route for route in app.routes if getattr(route, "path", "") == "/health")
         health_route = cast(Any, health_route)
+        expected_version = Path("VERSION").read_text(encoding="utf-8").strip() or "unknown"
         response_payload = health_route.endpoint(request=_request("/health"))
         self.assertEqual(
             response_payload,
-            {"service": "AI-SOC-Agent", "version": "0.3.0", "status": "ok"},
+            {"service": "AI-SOC-Agent", "version": expected_version, "status": "ok"},
         )
 
     def test_pipeline_run_returns_download_link_payload(self) -> None:

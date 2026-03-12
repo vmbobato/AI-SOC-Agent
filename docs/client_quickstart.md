@@ -26,9 +26,15 @@ Expected `/health` response example:
 ```json
 {
   "service": "AI-SOC-Agent",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "status": "ok"
 }
+```
+
+All API responses include:
+
+```text
+X-API-Version: <value from VERSION file>
 ```
 
 If auth is enabled, all pipeline calls require:

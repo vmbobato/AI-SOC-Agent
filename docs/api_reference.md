@@ -146,7 +146,7 @@ Response:
 ```json
 {
   "service": "AI-SOC-Agent",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "status": "ok"
 }
 ```
@@ -440,7 +440,7 @@ Response shape for sync runs (`/pipeline/run` and `/pipeline/intake`):
   "run_id": "string",
   "tenant_id": "string",
   "service": "AI-SOC-Agent",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "status": "completed|file_not_found",
   "filepath": "string",
   "input_sha256": "string",
@@ -610,6 +610,10 @@ Common HTTP codes:
 - `403`: invalid admin token, tenant access denied
 - `404`: run not found, artifact not found, key not found
 - `409`: run not completed yet, tenant already has active key
+
+All responses also include header:
+
+- `X-API-Version: <value from VERSION file>`
 
 Typical error body:
 
