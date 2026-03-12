@@ -15,6 +15,7 @@ saved_states/*
 .env
 .soc_agent/
 check_md*
-.github/
+uploads/
 .mypy_cache/
 .ruff_cache/
+client/

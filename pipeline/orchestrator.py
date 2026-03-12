@@ -151,16 +151,18 @@ def _run_llm_summary(
     return write_llm_summary(summary, out_dir=out_dir)
 
 
-def run_pipeline(filepath: str, config: Optional[PipelineConfig] = None) -> PipelineRunResult:
+def run_pipeline(
+    filepath: str, config: Optional[PipelineConfig] = None, run_id: Optional[str] = None
+) -> PipelineRunResult:
     cfg = config or PipelineConfig.from_env()
     started = time.perf_counter()
-    run_id = _now_run_id()
+    resolved_run_id = run_id or _now_run_id()
     log_path = Path(filepath)
     errors: List[str] = []
 
     if not log_path.exists():
         result = PipelineRunResult(
-            run_id=run_id,
+            run_id=resolved_run_id,
             status="file_not_found",
             filepath=str(log_path),
             input_sha256="",
@@ -170,7 +172,7 @@ def run_pipeline(filepath: str, config: Optional[PipelineConfig] = None) -> Pipe
             timings_ms={"total": int((time.perf_counter() - started) * 1000)},
             errors=["file_not_found"],
         )
-        metadata_path = write_json_run_metadata(result.to_dict(), run_id=run_id, out_dir=cfg.out_dir)
+        metadata_path = write_json_run_metadata(result.to_dict(), run_id=resolved_run_id, out_dir=cfg.out_dir)
         result.artifacts["metadata"] = str(metadata_path)
         return result
 
@@ -205,7 +207,7 @@ def run_pipeline(filepath: str, config: Optional[PipelineConfig] = None) -> Pipe
     timings_ms["campaign_correlation"] = int((time.perf_counter() - t_campaign_start) * 1000)
 
     t_alert_start = time.perf_counter()
-    alerts = build_alerts(cases, run_id=run_id)
+    alerts = build_alerts(cases, run_id=resolved_run_id)
     timings_ms["alert_pipeline"] = int((time.perf_counter() - t_alert_start) * 1000)
 
     t_report_start = time.perf_counter()
@@ -235,7 +237,7 @@ def run_pipeline(filepath: str, config: Optional[PipelineConfig] = None) -> Pipe
         artifacts["llm_summary"] = str(llm_path)
 
     result = PipelineRunResult(
-        run_id=run_id,
+        run_id=resolved_run_id,
         status="completed",
         filepath=str(log_path),
         input_sha256=input_hash,
@@ -253,7 +255,7 @@ def run_pipeline(filepath: str, config: Optional[PipelineConfig] = None) -> Pipe
 
     metadata_payload = result.to_dict()
     metadata_payload["generated_utc"] = datetime.now(timezone.utc).isoformat()
-    metadata_path = write_json_run_metadata(metadata_payload, run_id=run_id, out_dir=cfg.out_dir)
+    metadata_path = write_json_run_metadata(metadata_payload, run_id=resolved_run_id, out_dir=cfg.out_dir)
     result.artifacts["metadata"] = str(metadata_path)
 
     return result
@@ -304,3 +306,16 @@ def load_alerts_for_run(run_id: str, out_dir: str = "reports") -> List[Dict[str,
     if not isinstance(alerts_path, str):
         return []
     return _load_json_artifact(alerts_path)
+
+
+def load_artifact_path_for_run(run_id: str, artifact_name: str, out_dir: str = "reports") -> Optional[str]:
+    metadata = load_run_metadata(run_id, out_dir=out_dir)
+    if not metadata:
+        return None
+    artifacts = metadata.get("artifacts") or {}
+    if not isinstance(artifacts, dict):
+        return None
+    artifact = artifacts.get(artifact_name)
+    if not isinstance(artifact, str):
+        return None
+    return artifact

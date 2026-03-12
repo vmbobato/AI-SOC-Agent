@@ -16,7 +16,7 @@ class DetectionConfig:
 
 @dataclass(slots=True)
 class LLMConfig:
-    enabled: bool = False
+    enabled: bool = True
     provider: str = "openai"  # openai | ollama
     model: str = "gpt-4.1"  # llama3
     timeout_seconds: int = 500
@@ -25,14 +25,16 @@ class LLMConfig:
 @dataclass(slots=True)
 class PipelineConfig:
     out_dir: str = "reports"
+    uploads_dir: str = "uploads"
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
 
     @classmethod
     def from_env(cls) -> "PipelineConfig":
-        enabled = os.getenv("SOC_LLM_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+        enabled = os.getenv("SOC_LLM_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
         return cls(
             out_dir=os.getenv("SOC_REPORTS_DIR", "reports"),
+            uploads_dir=os.getenv("SOC_UPLOADS_DIR", "uploads"),
             detection=DetectionConfig(
                 scan_unique_paths_threshold=int(os.getenv("SOC_SCAN_UNIQUE_PATHS_THRESHOLD", "40")),
                 scan_404_ratio_threshold=float(os.getenv("SOC_SCAN_404_RATIO_THRESHOLD", "0.85")),

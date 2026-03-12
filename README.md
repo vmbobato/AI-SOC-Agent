@@ -205,11 +205,13 @@ uvicorn api.app:app --reload
 
 Endpoints:
 
-1. `POST /pipeline/run?filepath=/path/to/log`
-2. `GET /pipeline/runs/{run_id}`
-3. `GET /pipeline/runs/{run_id}/cases`
-4. `GET /pipeline/runs/{run_id}/campaigns`
-5. `GET /pipeline/runs/{run_id}/alerts`
+1. `POST /pipeline/run?filepath=/path/to/log` (synchronous run)
+2. `POST /pipeline/submit` (async run from log content payload)
+3. `GET /pipeline/runs/{run_id}` (status + metadata + links)
+4. `GET /pipeline/runs/{run_id}/cases`
+5. `GET /pipeline/runs/{run_id}/campaigns`
+6. `GET /pipeline/runs/{run_id}/alerts`
+7. `GET /pipeline/runs/{run_id}/downloads/{artifact_name}` (`cases`, `campaigns`, `alerts`, `incident_report`, `llm_summary`, `metadata`)
 
 ## Outputs
 
